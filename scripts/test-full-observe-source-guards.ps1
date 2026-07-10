@@ -56,6 +56,11 @@ foreach ($identityField in @('campaignId', 'campaignSessionId', 'machineId', 'se
 }
 Assert-NotContains $main "probeSet == 'all-readonly'" 'Full observe must not overload the legacy all-readonly registry path.'
 
+foreach ($writerName in @('status_writer.lua', 'result_writer.lua', 'evidence_writer.lua')) {
+  $writerSource = Get-Content -Raw -LiteralPath (Join-Path $luaRoot $writerName)
+  Assert-NotContains $writerSource 'os\.execute' "$writerName must never spawn a shell while writing runtime evidence."
+}
+
 $coordinator = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'full_observe_coordinator.lua')
 Assert-Contains $coordinator "tostring\(config\.mode or ''\) == 'observe'" 'Full observe must require mode=observe.'
 Assert-Contains $coordinator "config\.allowWriteProbes ~= true" 'Full observe must reject enabled write probes.'

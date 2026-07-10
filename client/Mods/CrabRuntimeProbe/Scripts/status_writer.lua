@@ -17,11 +17,6 @@ local function safeName(value)
   return text
 end
 
-local function ensureDirectory(path)
-  if type(os.execute) ~= 'function' then return end
-  pcall(function() os.execute('if not exist "' .. path .. '" mkdir "' .. path .. '"') end)
-end
-
 local function writeClosedFile(path, text)
   local file = io.open(path, 'w')
   if not file then return false, 'open_failed' end
@@ -63,7 +58,6 @@ function statusWriter.new(sessionId, config)
 
   function o:writeSnapshot(snapshot)
     if self.config.statusWriterEnabled ~= true then return false end
-    ensureDirectory(self.resultDir)
     self.sequence = self.sequence + 1
     snapshot.sequence = self.sequence
     local slot = (self.sequence - 1) % self.ringSize

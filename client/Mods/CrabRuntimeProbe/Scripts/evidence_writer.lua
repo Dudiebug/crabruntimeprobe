@@ -63,13 +63,6 @@ local function touchFile(path)
   return false
 end
 
-local function tryCreateDirectory(path)
-  if type(os.execute) ~= 'function' then return end
-  pcall(function()
-    os.execute('if not exist "' .. path .. '" mkdir "' .. path .. '"')
-  end)
-end
-
 local function safetyGates(config)
   return {
     allowHudTickHook = config.allowHudTickHook == true,
@@ -238,22 +231,13 @@ function evidenceWriter.new(sessionId, config)
     fallbackEvidencePath = 'Mods/CrabRuntimeProbe/Scripts/access_evidence_' .. sessionId .. '.jsonl',
     manifestPath = 'Mods/CrabRuntimeProbe/Scripts/results/session_manifest_' .. sessionId .. '.json',
     fallbackManifestPath = 'Mods/CrabRuntimeProbe/Scripts/session_manifest_' .. sessionId .. '.json',
-    triedCreateResultDir = false,
     warnedFallback = false,
     warnedFailure = false,
     activeEvidencePath = nil
   }
 
-  function o:ensureResultDir()
-    if not self.triedCreateResultDir then
-      tryCreateDirectory(self.resultDir)
-      self.triedCreateResultDir = true
-    end
-  end
-
   function o:writeEvidence(record)
     if self.config.writeJsonlResults == false then return true end
-    self:ensureResultDir()
     local line = json.encode(withDefaults(record, self.sessionId, self.config))
     if self.activeEvidencePath and appendLine(self.activeEvidencePath, line) then return true end
     local primaryCandidate = self.activeEvidencePath == self.evidencePath and self.fallbackEvidencePath or self.evidencePath
@@ -284,7 +268,6 @@ function evidenceWriter.new(sessionId, config)
   end
 
   function o:writeSessionManifest(buildInfoLines)
-    self:ensureResultDir()
     local existingText = readFile(self.manifestPath) or readFile(self.manifestPath .. '.previous')
       or readFile(self.fallbackManifestPath) or readFile(self.fallbackManifestPath .. '.previous')
     local existingOutputPath = existingText and existingText:match('"evidenceOutputPath"%s*:%s*"([^"]+)"') or nil

@@ -16,13 +16,6 @@ local function appendLine(path, line)
   return false
 end
 
-local function tryCreateDirectory(path)
-  if type(os.execute) ~= 'function' then return end
-  pcall(function()
-    os.execute('if not exist "' .. path .. '" mkdir "' .. path .. '"')
-  end)
-end
-
 local function fileExists(path)
   local f = io.open(path, 'r')
   if not f then return false end
@@ -37,7 +30,6 @@ function writer.new(sessionId, config)
     resultDir = 'Mods/CrabRuntimeProbe/Scripts/results',
     resultPath = 'Mods/CrabRuntimeProbe/Scripts/results/probe_results_' .. sessionId .. '.jsonl',
     fallbackPath = 'Mods/CrabRuntimeProbe/Scripts/probe_results_' .. sessionId .. '.jsonl',
-    triedCreateResultDir = false,
     warnedFallback = false,
     warnedFailure = false,
     activeResultPath = nil
@@ -53,10 +45,6 @@ function writer.new(sessionId, config)
     record.timestamp = record.timestamp or utcNow()
     record.sessionId = self.sessionId
     local line = json.encode(record)
-    if not self.triedCreateResultDir then
-      tryCreateDirectory(self.resultDir)
-      self.triedCreateResultDir = true
-    end
     if self.activeResultPath and appendLine(self.activeResultPath, line) then return true end
     local primaryCandidate = self.activeResultPath == self.resultPath and self.fallbackPath or self.resultPath
     local fallbackCandidate = primaryCandidate == self.resultPath and self.fallbackPath or self.resultPath
