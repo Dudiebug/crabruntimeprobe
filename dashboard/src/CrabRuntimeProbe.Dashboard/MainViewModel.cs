@@ -138,13 +138,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public bool IsHosting
     {
         get => SelectedRole == CampaignRole.Host;
-        set { if (value) SelectedRole = CampaignRole.Host; }
+        set
+        {
+            if (value) SelectedRole = CampaignRole.Host;
+            else if (SelectedRole == CampaignRole.Host) Raise();
+        }
     }
 
     public bool IsJoiningFriend
     {
         get => SelectedRole == CampaignRole.JoinedClient;
-        set { if (value) SelectedRole = CampaignRole.JoinedClient; }
+        set
+        {
+            if (value) SelectedRole = CampaignRole.JoinedClient;
+            else if (SelectedRole == CampaignRole.JoinedClient) Raise();
+        }
     }
 
     public PlayGuideFilter SelectedPlayGuideFilter
@@ -163,19 +171,31 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public bool IsPlayGuideToDoFilter
     {
         get => SelectedPlayGuideFilter == PlayGuideFilter.ToDo;
-        set { if (value) SelectedPlayGuideFilter = PlayGuideFilter.ToDo; }
+        set
+        {
+            if (value) SelectedPlayGuideFilter = PlayGuideFilter.ToDo;
+            else if (SelectedPlayGuideFilter == PlayGuideFilter.ToDo) Raise();
+        }
     }
 
     public bool IsPlayGuideAllFilter
     {
         get => SelectedPlayGuideFilter == PlayGuideFilter.All;
-        set { if (value) SelectedPlayGuideFilter = PlayGuideFilter.All; }
+        set
+        {
+            if (value) SelectedPlayGuideFilter = PlayGuideFilter.All;
+            else if (SelectedPlayGuideFilter == PlayGuideFilter.All) Raise();
+        }
     }
 
     public bool IsPlayGuideCompletedFilter
     {
         get => SelectedPlayGuideFilter == PlayGuideFilter.Completed;
-        set { if (value) SelectedPlayGuideFilter = PlayGuideFilter.Completed; }
+        set
+        {
+            if (value) SelectedPlayGuideFilter = PlayGuideFilter.Completed;
+            else if (SelectedPlayGuideFilter == PlayGuideFilter.Completed) Raise();
+        }
     }
 
     public string Activity { get => _activity; private set => Set(ref _activity, value); }

@@ -122,7 +122,7 @@
                                                    Text="{Binding Activity}" TextWrapping="Wrap"/>
                                     </StackPanel>
                                     <ProgressBar Grid.Column="1" Height="12" Margin="20,0" VerticalAlignment="Center"
-                                                 Minimum="0" Maximum="100" Value="{Binding PlayGuideOverallPercentage}"
+                                                 Minimum="0" Maximum="100" Value="{Binding PlayGuideOverallPercentage, Mode=OneWay}"
                                                  AutomationProperties.Name="Overall Play Guide progress"/>
                                     <TextBlock Grid.Column="2" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"
                                                Foreground="{StaticResource AccentBrush}"
@@ -170,7 +170,7 @@
                                                         </StackPanel>
                                                         <ProgressBar Grid.Column="1" Height="10" Margin="18,0"
                                                                      VerticalAlignment="Center" Minimum="0" Maximum="100"
-                                                                     Value="{Binding Percentage}"/>
+                                                                     Value="{Binding Percentage, Mode=OneWay}"/>
                                                         <TextBlock Grid.Column="2" FontSize="16" FontWeight="SemiBold"
                                                                    VerticalAlignment="Center" HorizontalAlignment="Right"
                                                                    Foreground="{StaticResource AccentBrush}" Text="{Binding PercentageText}"/>
