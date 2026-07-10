@@ -169,6 +169,7 @@ public sealed class CampaignService
         CampaignRole role,
         string campaignName = "CrabSync Full Observe",
         string? resourceStartPath = null,
+        string? dashboardExecutablePath = null,
         CancellationToken cancellationToken = default)
     {
         if (role == CampaignRole.Unknown) throw new ArgumentException("Select Host or Joined Client.", nameof(role));
@@ -180,6 +181,9 @@ public sealed class CampaignService
         var scripts = Path.Combine(gameBinary, "Mods", "CrabRuntimeProbe", "Scripts");
         if (!Directory.Exists(scripts))
             throw new DirectoryNotFoundException($"Installed RuntimeProbe scripts were not found: {scripts}");
+        if (!string.IsNullOrWhiteSpace(dashboardExecutablePath))
+            await ConfigureDashboardAutoStartAsync(scripts, dashboardExecutablePath, cancellationToken)
+                .ConfigureAwait(false);
         // RuntimeProbe's canonical append-only evidence and completed live-status ring live together
         // under Scripts/results. Older fixture packages may still contain Scripts/status; readers can
         // be pointed there explicitly, but new requests and stop markers use the canonical directory.
@@ -471,6 +475,25 @@ public sealed class CampaignService
         }
     }
 
+    private static Task ConfigureDashboardAutoStartAsync(
+        string scriptsDirectory,
+        string dashboardExecutablePath,
+        CancellationToken cancellationToken)
+    {
+        var fullPath = Path.GetFullPath(dashboardExecutablePath);
+        if (!Path.IsPathFullyQualified(fullPath)
+            || !Path.GetExtension(fullPath).Equals(".exe", StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(fullPath))
+            throw new FileNotFoundException("The dashboard executable required for game autostart was not found.", fullPath);
+        if (fullPath.IndexOfAny(new[] { '\r', '\n', '"', '%' }) >= 0)
+            throw new InvalidDataException("The dashboard executable path contains characters that cannot be launched safely.");
+
+        return AtomicFile.WriteTextAsync(
+            Path.Combine(scriptsDirectory, "dashboard_autostart.txt"),
+            fullPath + Environment.NewLine,
+            cancellationToken);
+    }
+
     private static string SanitizeCampaignName(string value)
     {
         var sanitized = new string((value ?? string.Empty)
@@ -502,14 +525,31 @@ public sealed class CampaignService
 
 public sealed class GameProcessService
 {
-    public bool IsRunning(GameInstallation installation) => FindProcess(installation) is not null;
+    public bool IsRunning(GameInstallation installation) => FindRunning(installation) is not null;
 
-    public int? ProcessId(GameInstallation installation) => FindProcess(installation)?.Id;
+    public int? ProcessId(GameInstallation installation) => FindRunning(installation)?.Id;
+
+    public Process? FindRunning(GameInstallation installation)
+    {
+        var names = new[]
+        {
+            Path.GetFileNameWithoutExtension(installation.ExecutablePath),
+            "CrabChampions",
+            "CrabChampions-Win64-Shipping"
+        }.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var name in names)
+        {
+            var process = Process.GetProcessesByName(name).FirstOrDefault(IsLive);
+            if (process is not null) return process;
+        }
+        return null;
+    }
 
     public Process Launch(GameInstallation installation)
     {
         if (!installation.Exists) throw new FileNotFoundException("Game executable not found.", installation.ExecutablePath);
-        var existing = FindProcess(installation);
+        var existing = FindRunning(installation);
         if (existing is not null) return existing;
         return Process.Start(new ProcessStartInfo
         {
@@ -524,7 +564,7 @@ public sealed class GameProcessService
         TimeSpan pollInterval,
         CancellationToken cancellationToken = default)
     {
-        var process = FindProcess(installation);
+        var process = FindRunning(installation);
         if (process is null) return null;
         while (!process.HasExited)
         {
@@ -533,19 +573,15 @@ public sealed class GameProcessService
         return process.ExitCode;
     }
 
-    private static Process? FindProcess(GameInstallation installation)
+    private static bool IsLive(Process process)
     {
-        var processName = Path.GetFileNameWithoutExtension(installation.ExecutablePath);
-        return Process.GetProcessesByName(processName).FirstOrDefault(process =>
+        try
         {
-            try
-            {
-                return !process.HasExited;
-            }
-            catch (InvalidOperationException)
-            {
-                return false;
-            }
-        });
+            return !process.HasExited;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 }

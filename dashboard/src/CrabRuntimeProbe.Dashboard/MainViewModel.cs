@@ -412,7 +412,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             var installation = RequireInstallation();
             Activity = "Installing the read-only payload and preparing a fresh generation...";
             Campaign = await RequireCampaignService().PrepareAsync(
-                installation, SelectedRole, CampaignName, cancellationToken: _lifetime.Token);
+                installation, SelectedRole, CampaignName,
+                dashboardExecutablePath: Environment.ProcessPath,
+                cancellationToken: _lifetime.Token);
             _autoCollected = false;
             _stopRequested = false;
             Activity = "Prepared - start Crab Champions when both computers are ready";
@@ -440,6 +442,34 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
 
     private Task OpenGameAsync() => StartMonitoringAsync();
+
+    public async Task AttachToRunningGameAsync()
+    {
+        try
+        {
+            if (_demo || !string.IsNullOrWhiteSpace(_fixture)) return;
+            if (Campaign is null)
+            {
+                Activity = "Crab Champions opened the dashboard - choose a role and prepare the play guide once";
+                return;
+            }
+
+            var installation = RequireInstallation();
+            var process = new GameProcessService().FindRunning(installation);
+            if (process is null)
+            {
+                Activity = "The dashboard was started by Crab Champions, but the game process is not visible yet";
+                return;
+            }
+
+            _monitoredProcess = process;
+            _processWasSeen = true;
+            _localGameRunning = true;
+            Campaign = await RequireCampaignService().MarkMonitoringAsync(Campaign, _lifetime.Token);
+            Activity = $"Crab Champions opened the dashboard - monitoring process {process.Id}";
+        }
+        catch (Exception ex) { ShowError(ex); }
+    }
 
     private async Task ResumeAsync()
     {

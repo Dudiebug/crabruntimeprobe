@@ -2,6 +2,7 @@ local SCRIPT_DIR = 'Mods/CrabRuntimeProbe/Scripts/'
 package.path = package.path .. ';' .. SCRIPT_DIR .. '?.lua'
 
 local crpLog = require('crp_log')
+local dashboardAutostart = require('dashboard_autostart')
 local writerFactory = require('result_writer')
 local evidenceWriterFactory = require('evidence_writer')
 
@@ -99,6 +100,8 @@ local ALLOWED_TICK_DRIVERS = {
 }
 
 local log = crpLog.line
+
+dashboardAutostart.launch(SCRIPT_DIR .. 'dashboard_autostart.txt', log)
 
 local function parseConfig(path)
   local config = {}

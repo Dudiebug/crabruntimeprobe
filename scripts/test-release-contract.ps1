@@ -29,7 +29,8 @@ foreach ($module in @(
   'passive_hook_manager.lua',
   'inventory_stage_manager.lua',
   'full_observe_coordinator.lua',
-  'crabsync_catalog.lua'
+  'crabsync_catalog.lua',
+  'dashboard_autostart.lua'
 )) {
   if ($verify -notmatch [regex]::Escape($module)) {
     throw "Release verification does not require $module."

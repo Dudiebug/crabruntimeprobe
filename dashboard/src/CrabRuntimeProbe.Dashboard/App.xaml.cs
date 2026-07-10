@@ -8,8 +8,19 @@ namespace CrabRuntimeProbe.Dashboard;
 
 public partial class App : Application
 {
+    private Mutex? _singleInstanceMutex;
+
     private async void Application_Startup(object sender, StartupEventArgs e)
     {
+        _singleInstanceMutex = new Mutex(true, @"Local\CrabRuntimeProbe.Dashboard", out var ownsMutex);
+        if (!ownsMutex)
+        {
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+            Shutdown(0);
+            return;
+        }
+
         if (e.Args.Contains("--self-test", StringComparer.OrdinalIgnoreCase))
         {
             try
@@ -46,9 +57,21 @@ public partial class App : Application
             return;
         }
         var demo = e.Args.Contains("--demo", StringComparer.OrdinalIgnoreCase) || screenshot is not null;
-        var window = new MainWindow(new MainViewModel(fixture, demo), screenshot, screenshotView);
+        var attachToRunningGame = e.Args.Contains("--game-autostart", StringComparer.OrdinalIgnoreCase);
+        var window = new MainWindow(new MainViewModel(fixture, demo), screenshot, screenshotView, attachToRunningGame);
         MainWindow = window;
         window.Show();
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        if (_singleInstanceMutex is not null)
+        {
+            _singleInstanceMutex.ReleaseMutex();
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+        }
+        base.OnExit(e);
     }
 
     private static string? ArgumentValue(IReadOnlyList<string> args, string name)

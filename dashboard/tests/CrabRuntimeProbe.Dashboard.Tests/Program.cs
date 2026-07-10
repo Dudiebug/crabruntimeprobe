@@ -300,11 +300,14 @@ static async Task PrepareAndResumeAsync()
     await File.WriteAllTextAsync(Path.Combine(status, "dashboard_stop_requested.json"), "{}");
     var canonical = Path.Combine(status, "access_evidence_old.jsonl");
     await File.WriteAllTextAsync(canonical, "{\"sessionId\":\"old\"}\n");
+    var dashboardExecutable = Path.Combine(temp.Path, "CrabRuntimeProbe.Dashboard.exe");
+    await File.WriteAllBytesAsync(dashboardExecutable, Array.Empty<byte>());
 
     var store = new DashboardStateStore(Path.Combine(temp.Path, "state"));
     var service = new CampaignService(store);
     var state = await service.PrepareAsync(
-        new GameInstallation(game, executable, "test"), CampaignRole.JoinedClient, "Test Campaign", package);
+        new GameInstallation(game, executable, "test"), CampaignRole.JoinedClient, "Test Campaign", package,
+        dashboardExecutable);
     var config = await File.ReadAllTextAsync(Path.Combine(game, "Mods", "CrabRuntimeProbe", "Scripts", "config.txt"));
     foreach (var required in new[]
              {
@@ -318,6 +321,10 @@ static async Task PrepareAndResumeAsync()
     foreach (var name in new[] { "BPModLoaderMod : 1", "BPML_GenericFunctions : 1", "CrabRuntimeProbe : 1" })
         Require(mods.Contains(name, StringComparison.OrdinalIgnoreCase), $"required mod not enabled: {name}");
     Require(File.Exists(canonical), "prepare deleted canonical append-only evidence");
+    var autostartPath = await File.ReadAllTextAsync(
+        Path.Combine(game, "Mods", "CrabRuntimeProbe", "Scripts", "dashboard_autostart.txt"));
+    Require(autostartPath.Trim() == Path.GetFullPath(dashboardExecutable),
+        "prepare did not configure game-triggered dashboard autostart");
     Require(Directory.EnumerateFiles(Path.Combine(status, "status-archive"), "*", SearchOption.AllDirectories).Any(),
         "prior live status/control markers were not archived");
     var request = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(status, "dashboard_campaign_request.json")));

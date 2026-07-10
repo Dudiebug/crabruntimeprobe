@@ -46,6 +46,13 @@ For normal use, extract the `CrabRuntimeProbe-v*-win-x64.zip` release and open
 packaged payload, and prepares the read-only campaign without Git, Node, or a
 development SDK.
 
+The first **Start play guide** run installs the payload and records the current
+dashboard executable for local game-triggered startup. After that one-time
+setup, launching Crab Champions normally from Steam opens the dashboard and
+attaches it to the already-running game. Launching through **Start play guide**
+continues to open the game directly; a single-instance guard prevents duplicate
+dashboard windows.
+
 The Crab Champions Win64 game bin path is usually:
 
 ```text

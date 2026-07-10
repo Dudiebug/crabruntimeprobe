@@ -104,6 +104,9 @@
                                                 AutomationProperties.Name="Finish and save results"
                                                 AutomationProperties.HelpText="Stops observation safely and saves this computer’s evidence bundle."/>
                                     </WrapPanel>
+                                    <TextBlock FontSize="13" Foreground="{StaticResource MutedBrush}" Margin="0,2,0,0"
+                                               Text="First setup only: after you click Start play guide once, opening Crab Champions from Steam will open this guide automatically."
+                                               TextWrapping="Wrap"/>
                                 </StackPanel>
                             </Border>
 

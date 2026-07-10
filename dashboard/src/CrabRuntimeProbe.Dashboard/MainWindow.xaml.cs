@@ -22,22 +22,26 @@ public partial class MainWindow : Window
     private readonly MainViewModel _viewModel;
     private readonly string? _screenshotPath;
     private readonly DashboardScreenshotView? _screenshotView;
+    private readonly bool _attachToRunningGame;
 
     public MainWindow(
         MainViewModel viewModel,
         string? screenshotPath = null,
-        DashboardScreenshotView? screenshotView = null)
+        DashboardScreenshotView? screenshotView = null,
+        bool attachToRunningGame = false)
     {
         InitializeComponent();
         _viewModel = viewModel;
         _screenshotPath = screenshotPath;
         _screenshotView = screenshotView;
+        _attachToRunningGame = attachToRunningGame;
         DataContext = viewModel;
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         await _viewModel.InitializeAsync();
+        if (_attachToRunningGame) await _viewModel.AttachToRunningGameAsync();
         if (_screenshotPath is null) return;
         Width = 1440;
         Height = 900;

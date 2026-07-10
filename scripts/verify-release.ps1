@@ -26,6 +26,7 @@ foreach ($file in @(
   "Payload\Mods\mods.txt",
   "Payload\Mods\CrabRuntimeProbe\enabled.txt",
   "Payload\Mods\CrabRuntimeProbe\Scripts\main.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\dashboard_autostart.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\config.txt",
   "Payload\Mods\CrabRuntimeProbe\Scripts\record_builder.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\campaign_state.lua",
@@ -73,6 +74,23 @@ if (Test-Path -LiteralPath $configPath) {
     "allowFullObserveRuntimeDiscovery = false"
   )) {
     if ($config -notmatch [regex]::Escape($safeDefault)) { Add-Problem "Unsafe or missing config default: $safeDefault" }
+  }
+}
+
+$mainLuaPath = Join-Path $BundleRoot "Payload\Mods\CrabRuntimeProbe\Scripts\main.lua"
+$autoStartLuaPath = Join-Path $BundleRoot "Payload\Mods\CrabRuntimeProbe\Scripts\dashboard_autostart.lua"
+if ((Test-Path -LiteralPath $mainLuaPath -PathType Leaf) -and
+    (Test-Path -LiteralPath $autoStartLuaPath -PathType Leaf)) {
+  $mainLua = Get-Content -LiteralPath $mainLuaPath -Raw
+  $autoStartLua = Get-Content -LiteralPath $autoStartLuaPath -Raw
+  if ($mainLua -notmatch [regex]::Escape("require('dashboard_autostart')") -or
+      $mainLua -notmatch [regex]::Escape("dashboard_autostart.txt")) {
+    Add-Problem "Runtime payload does not invoke dashboard autostart."
+  }
+  foreach ($token in @("--game-autostart", "os.execute", "start \"\" /b")) {
+    if ($autoStartLua -notmatch [regex]::Escape($token)) {
+      Add-Problem "Dashboard autostart contract is missing: $token"
+    }
   }
 }
 
