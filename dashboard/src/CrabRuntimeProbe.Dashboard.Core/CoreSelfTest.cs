@@ -10,9 +10,9 @@ public static class CoreSelfTest
         Require(snapshot.Sequence == 7, "status sequence", messages);
         Require(snapshot.Safety.AllRequiredSafe, "safety markers", messages);
         var checklist = new ChecklistReducer().Reduce(snapshot);
-        Require(checklist.Single(item => item.Id == "transaction.server-interact").State == ChecklistDisplayState.InProgress,
+        Require(checklist.Single(item => item.Id == "transaction-server-interact").State == ChecklistDisplayState.InProgress,
             "hook registration is not completion", messages);
-        Require(checklist.Single(item => item.Id == "health.damage").State == ChecklistDisplayState.Confirmed,
+        Require(checklist.Single(item => item.Id == "health-damage").State == ChecklistDisplayState.Confirmed,
             "qualifying natural evidence completes", messages);
         var redacted = new EvidenceRedactor().Redact("{\"UniqueId\":\"76561198000000000\",\"PlayerName\":\"Dylan\"}");
         Require(!redacted.Contains("76561198000000000", StringComparison.Ordinal)
@@ -51,8 +51,8 @@ public static class DemoStatus
         "circuitBreakers": { "inventory": "closed", "health": "closed" }
       },
       "checklist": {
-        "transaction.server-interact": { "status": "confirmed", "observationCount": 0, "hookRegistered": true, "qualifyingEvidence": false, "evidenceKinds": ["hook-registration"] },
-        "health.damage": { "status": "confirmed", "observationCount": 1, "qualifyingEvidence": true, "evidenceKinds": ["natural-call"], "sourceRoles": ["host"], "evidenceSessions": ["demo-session"] }
+        "transaction-server-interact": { "status": "confirmed", "observationCount": 0, "hookRegistered": true, "qualifyingEvidence": false, "evidenceKinds": ["hook-registration"] },
+        "health-damage": { "status": "confirmed", "observationCount": 1, "qualifyingEvidence": true, "evidenceKinds": ["natural-call"], "sourceRoles": ["host"], "evidenceSessions": ["demo-session"] }
       },
       "evidenceHealth": { "state": "healthy", "canonicalRows": 12, "rejectedRows": 0, "dirtyRows": 0 },
       "crashSuspected": false,

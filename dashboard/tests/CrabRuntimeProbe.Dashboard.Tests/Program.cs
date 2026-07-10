@@ -96,10 +96,15 @@ static async Task ChecklistAsync()
     Require(definitions.Count > 50, "authoritative entries array was not loaded");
     Require(definitions.Any(item => item.Id == "session-runtimeprobe-loaded"), "authoritative IDs were not retained");
 
+    var authoritativeReduced = new ChecklistReducer(definitions).Reduce(new LiveStatusReader().Parse(DemoStatus.Json));
+    Require(authoritativeReduced.Count == definitions.Count
+            && authoritativeReduced.All(item => item.Group != "Discovered / uncatalogued"),
+        "embedded demo status invented non-canonical checklist rows");
+
     var staticReduced = new ChecklistReducer().Reduce(new LiveStatusReader().Parse(DemoStatus.Json));
-    Require(staticReduced.Single(item => item.Id == "transaction.server-interact").State == ChecklistDisplayState.InProgress,
+    Require(staticReduced.Single(item => item.Id == "transaction-server-interact").State == ChecklistDisplayState.InProgress,
         "hook registration was treated as completion");
-    Require(staticReduced.Single(item => item.Id == "health.damage").State == ChecklistDisplayState.Confirmed,
+    Require(staticReduced.Single(item => item.Id == "health-damage").State == ChecklistDisplayState.Confirmed,
         "qualifying natural evidence did not complete row");
     Require(staticReduced.Single(item => item.Id == "inventory.first-da-identity").State == ChecklistDisplayState.BlockedByPrerequisite,
         "prerequisite gate not applied");
@@ -108,7 +113,7 @@ static async Task ChecklistAsync()
             "\"evidenceSessionReferences\": [\"demo-session\"], \"firstTimestamp\": \"2026-07-10T17:00:00Z\", \"latestTimestamp\": \"2026-07-10T18:00:00Z\"",
             StringComparison.Ordinal);
     var timestampItem = new ChecklistReducer().Reduce(new LiveStatusReader().Parse(timestampJson))
-        .Single(item => item.Id == "health.damage");
+        .Single(item => item.Id == "health-damage");
     Require(timestampItem.FirstObservedAtUtc is not null && timestampItem.LastObservedAtUtc is not null,
         "first/latest checklist timestamps were not parsed");
     Require(timestampItem.EvidenceSessions.Contains("demo-session", StringComparison.Ordinal),
