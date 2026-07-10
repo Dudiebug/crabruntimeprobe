@@ -192,12 +192,14 @@ public sealed class CampaignService
         campaignName = SanitizeCampaignName(campaignName);
         var machineId = await _stateStore.GetOrCreateMachineIdAsync(cancellationToken).ConfigureAwait(false);
         var generation = now.ToUnixTimeSeconds();
+        var sessionId = $"{now:yyyyMMddTHHmmssZ}-{Guid.NewGuid().ToString("N")[..8]}";
         ArchivePriorTransientStatus(statusDirectory, now);
         await ConfigureFullObserveAsync(
             Path.Combine(scripts, "config.txt"),
             role,
             campaignName,
             generation,
+            sessionId,
             machineId,
             cancellationToken).ConfigureAwait(false);
 
@@ -206,7 +208,7 @@ public sealed class CampaignService
             "crabsync-full-observe",
             campaignName,
             generation,
-            $"{now:yyyyMMddTHHmmssZ}-{Guid.NewGuid().ToString("N")[..8]}",
+            sessionId,
             machineId,
             role,
             installation.InstallDirectory,
@@ -408,6 +410,7 @@ public sealed class CampaignService
         CampaignRole role,
         string campaignName,
         long campaignGeneration,
+        string campaignSessionId,
         string machineId,
         CancellationToken cancellationToken)
     {
@@ -419,15 +422,18 @@ public sealed class CampaignService
             ["campaignName"] = campaignName,
             ["campaignId"] = "crabsync-full-observe",
             ["campaignGeneration"] = campaignGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["campaignSessionId"] = campaignSessionId,
             ["machineId"] = machineId,
             ["selectedRole"] = role.ToContract(),
             ["mode"] = "observe",
             ["tickDriver"] = "executeDelay",
             ["probeSet"] = "crabsync-full-observe",
+            ["fullObserveEnabled"] = "true",
             ["statusWriterEnabled"] = "true",
             ["statusRingSize"] = "4",
             ["allowPassiveObservationHooks"] = "true",
             ["allowFullObserveInventoryStages"] = "true",
+            ["allowFullObserveRuntimeDiscovery"] = "true",
             ["fullObserveHeartbeatSeconds"] = "1",
             ["fullObserveInventoryIntervalSeconds"] = "2",
             ["fullObserveInventoryHeartbeatSeconds"] = "30",
@@ -520,6 +526,64 @@ public sealed class CampaignService
             var destination = SafeCombine(archive, Path.GetFileName(source));
             File.Move(source, destination, true);
         }
+    }
+}
+
+public sealed class GameProcessExitDetector
+{
+    public static readonly TimeSpan DefaultStartupGrace = TimeSpan.FromSeconds(15);
+    public const int DefaultRequiredConsecutiveMisses = 5;
+
+    private readonly TimeSpan _startupGrace;
+    private readonly int _requiredConsecutiveMisses;
+    private DateTimeOffset? _monitoringStartedAt;
+    private bool _processWasSeen;
+    private int _consecutiveMisses;
+
+    public GameProcessExitDetector(
+        TimeSpan? startupGrace = null,
+        int requiredConsecutiveMisses = DefaultRequiredConsecutiveMisses)
+    {
+        if (startupGrace < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(startupGrace));
+        if (requiredConsecutiveMisses < 1)
+            throw new ArgumentOutOfRangeException(nameof(requiredConsecutiveMisses));
+        _startupGrace = startupGrace ?? DefaultStartupGrace;
+        _requiredConsecutiveMisses = requiredConsecutiveMisses;
+    }
+
+    public void Begin(DateTimeOffset observedAt, bool processSeen)
+    {
+        _monitoringStartedAt = observedAt;
+        _processWasSeen = processSeen;
+        _consecutiveMisses = 0;
+    }
+
+    public void Reset()
+    {
+        _monitoringStartedAt = null;
+        _processWasSeen = false;
+        _consecutiveMisses = 0;
+    }
+
+    public bool Observe(bool running, DateTimeOffset observedAt)
+    {
+        _monitoringStartedAt ??= observedAt;
+        if (running)
+        {
+            _processWasSeen = true;
+            _consecutiveMisses = 0;
+            return false;
+        }
+
+        if (!_processWasSeen || observedAt - _monitoringStartedAt.Value < _startupGrace)
+        {
+            _consecutiveMisses = 0;
+            return false;
+        }
+
+        _consecutiveMisses++;
+        return _consecutiveMisses >= _requiredConsecutiveMisses;
     }
 }
 

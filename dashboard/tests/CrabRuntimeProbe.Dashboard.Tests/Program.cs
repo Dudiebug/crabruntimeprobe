@@ -14,6 +14,7 @@ var tests = new (string Name, Func<Task> Body)[]
     ("real exhaustive coverage catalog aliases and terminal states", CoverageCatalogAsync),
     ("atomic file replacement", AtomicFileAsync),
     ("safe prepare, mods merge, status archive, and resume", PrepareAndResumeAsync),
+    ("game process handoff grace and confirmed exit", GameProcessExitDetectorAsync),
     ("identity redaction", RedactionAsync),
     ("byte-identical canonical collection and unsafe omission", CollectionAsync),
     ("strict host-client correlation and tamper rejection", CorrelationAsync),
@@ -313,9 +314,12 @@ static async Task PrepareAndResumeAsync()
              {
                  "enabled = true", "tickDriver = executeDelay", "mode = observe",
                  "probeSet = crabsync-full-observe", "allowWriteProbes = false", "allowRpcProbes = false",
-                 "allowHudTickHook = false", "allowRawIdentityEvidence = false"
+                 "allowHudTickHook = false", "allowRawIdentityEvidence = false",
+                 "fullObserveEnabled = true", "allowFullObserveRuntimeDiscovery = true"
              })
         Require(config.Contains(required, StringComparison.Ordinal), $"safe config missing {required}");
+    Require(config.Contains($"campaignSessionId = {state.SessionId}", StringComparison.Ordinal),
+        "runtime config session does not match dashboard campaign session");
     var mods = await File.ReadAllTextAsync(Path.Combine(game, "Mods", "mods.txt"));
     Require(mods.Contains("; keep this comment") && mods.Contains("UnrelatedMod : 0"), "mods.txt merge lost user lines");
     foreach (var name in new[] { "BPModLoaderMod : 1", "BPML_GenericFunctions : 1", "CrabRuntimeProbe : 1" })
@@ -333,6 +337,24 @@ static async Task PrepareAndResumeAsync()
     Require(resumed?.Phase == "monitoring", "resume did not restore campaign");
     request = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(status, "dashboard_campaign_request.json")));
     Require(request.RootElement.GetProperty("command").GetString() == "resume", "resume marker command mismatch");
+}
+
+static Task GameProcessExitDetectorAsync()
+{
+    var started = DateTimeOffset.Parse("2026-07-10T21:06:19Z");
+    var detector = new GameProcessExitDetector(TimeSpan.FromSeconds(3), requiredConsecutiveMisses: 3);
+    detector.Begin(started, processSeen: true);
+
+    Require(!detector.Observe(false, started.AddSeconds(1)), "launcher handoff failed inside startup grace");
+    Require(!detector.Observe(false, started.AddSeconds(3)), "one missed process poll was treated as exit");
+    Require(!detector.Observe(true, started.AddSeconds(4)), "running shipping process was treated as exit");
+    Require(!detector.Observe(false, started.AddSeconds(5)), "first confirmed miss was treated as exit");
+    Require(!detector.Observe(false, started.AddSeconds(6)), "second confirmed miss was treated as exit");
+    Require(detector.Observe(false, started.AddSeconds(7)), "consecutive process misses did not confirm exit");
+
+    detector.Reset();
+    Require(!detector.Observe(false, started.AddMinutes(1)), "an unseen process was treated as having exited");
+    return Task.CompletedTask;
 }
 
 static Task RedactionAsync()

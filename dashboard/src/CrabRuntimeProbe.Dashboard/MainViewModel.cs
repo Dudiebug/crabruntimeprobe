@@ -26,6 +26,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly LiveStatusReader _statusReader = new();
     private readonly CapabilityReadinessService _readinessService = new();
     private readonly PlayGuideReducer _playGuideReducer = new();
+    private readonly GameProcessExitDetector _gameExitDetector = new();
     private readonly CancellationTokenSource _lifetime = new();
     private CampaignService? _campaignService;
     private LocalCampaignState? _campaign;
@@ -38,10 +39,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _lastBundle = string.Empty;
     private bool _needsCoverageOnly = true;
     private bool _initialized;
-    private bool _processWasSeen;
     private bool _localGameRunning;
     private bool _autoCollected;
-    private bool _stopRequested;
     private Process? _monitoredProcess;
     private CoverageRow? _selectedCoverage;
     private IReadOnlyList<ChecklistDefinition> _checklistDefinitions = ChecklistCatalog.All;
@@ -416,7 +415,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 dashboardExecutablePath: Environment.ProcessPath,
                 cancellationToken: _lifetime.Token);
             _autoCollected = false;
-            _stopRequested = false;
+            _gameExitDetector.Reset();
             Activity = "Prepared - start Crab Champions when both computers are ready";
             await SavePreferencesAsync();
         }
@@ -433,8 +432,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             var installation = RequireInstallation();
             var process = new GameProcessService().Launch(installation);
             _monitoredProcess = process;
-            _processWasSeen = true;
             _localGameRunning = true;
+            _gameExitDetector.Begin(DateTimeOffset.UtcNow, processSeen: true);
             Campaign = await RequireCampaignService().MarkMonitoringAsync(Campaign, _lifetime.Token);
             Activity = $"Monitoring Crab Champions process {process.Id} - make only natural gameplay actions";
         }
@@ -463,8 +462,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             }
 
             _monitoredProcess = process;
-            _processWasSeen = true;
             _localGameRunning = true;
+            _gameExitDetector.Begin(DateTimeOffset.UtcNow, processSeen: true);
             Campaign = await RequireCampaignService().MarkMonitoringAsync(Campaign, _lifetime.Token);
             Activity = $"Crab Champions opened the dashboard - monitoring process {process.Id}";
         }
@@ -480,7 +479,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             SelectedRole = Campaign.Role;
             CampaignName = Campaign.CampaignName;
             GameDirectory = Campaign.GameDirectory;
-            _stopRequested = false;
+            _gameExitDetector.Reset();
             Activity = "Campaign resumed - resume marker written; start monitoring when ready";
         }
         catch (Exception ex) { ShowError(ex); }
@@ -492,7 +491,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             await RequireCampaignService().RequestStopAsync(Campaign, _lifetime.Token);
-            _stopRequested = true;
             Activity = "Stop requested - RuntimeProbe will flush evidence at a safe boundary";
         }
         catch (Exception ex) { ShowError(ex); }
@@ -511,7 +509,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             await RequireCampaignService().RequestStopAsync(Campaign, _lifetime.Token);
-            _stopRequested = true;
             Activity = "Finishing observation, validating, and hashing evidence...";
             await Task.Delay(TimeSpan.FromMilliseconds(500), _lifetime.Token);
             var result = await new EvidenceCollector().CollectAsync(
@@ -566,8 +563,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             await RequireCampaignService().ResetAsync(Campaign, _lifetime.Token);
             Campaign = null;
-            _stopRequested = false;
             _monitoredProcess = null;
+            _gameExitDetector.Reset();
             Status = new LiveStatusReadResult(LiveStatusSnapshot.Empty, false, true, false,
                 "No active campaign", DateTimeOffset.UtcNow);
             RefreshChecklist(Status.Snapshot);
@@ -584,9 +581,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (_demo || !string.IsNullOrWhiteSpace(_fixture) || Campaign is null) continue;
             try
             {
+                var observedAt = DateTimeOffset.UtcNow;
                 var next = await _statusReader.ReadLatestAsync(Campaign.StatusDirectory, cancellationToken: token);
                 var installation = _gameLocator.ValidateSelectedDirectory(GameDirectory);
-                var running = installation is not null && new GameProcessService().IsRunning(installation);
+                var runningProcess = installation is null ? null : new GameProcessService().FindRunning(installation);
+                var running = runningProcess is not null;
                 _localGameRunning = running;
                 await Application.Current.Dispatcher.InvokeAsync(() =>
                 {
@@ -596,8 +595,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 });
 
                 if (installation is null) continue;
-                if (running) _processWasSeen = true;
-                if (_processWasSeen && !running && !_autoCollected && Campaign.Phase == "monitoring")
+                if (runningProcess is not null) _monitoredProcess = runningProcess;
+                if (_gameExitDetector.Observe(running, observedAt)
+                    && !_autoCollected && Campaign.Phase == "monitoring")
                 {
                     _autoCollected = true;
                     var nonZeroExit = false;
@@ -606,8 +606,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                         nonZeroExit = _monitoredProcess is { HasExited: true } && _monitoredProcess.ExitCode != 0;
                     }
                     catch (InvalidOperationException) { }
-                    var abnormal = nonZeroExit || next.Snapshot.CrashSuspected || next.Snapshot.DirtyEvidence
-                                   || (!_stopRequested && next.IsStale);
+                    // Missing/stale status is evidence-health information, not proof that the game crashed.
+                    var abnormal = nonZeroExit || next.Snapshot.CrashSuspected;
                     var export = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
                         "CrabRuntimeProbe Evidence");
                     var result = await new EvidenceCollector().CollectAsync(
