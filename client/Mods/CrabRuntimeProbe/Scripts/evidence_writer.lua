@@ -27,6 +27,33 @@ local function writeFile(path, text)
   return false
 end
 
+local function writeFileAtomic(path, text, token)
+  local tempPath = path .. '.' .. tostring(token or 'session'):gsub('[^%w_%-]', '_') .. '.tmp'
+  local backupPath = path .. '.previous'
+  if not writeFile(tempPath, text) then return false end
+  os.remove(backupPath)
+  local existing = io.open(path, 'r')
+  if existing then
+    existing:close()
+    if not os.rename(path, backupPath) then os.remove(tempPath); return false end
+  end
+  if not os.rename(tempPath, path) then
+    os.remove(tempPath)
+    os.rename(backupPath, path)
+    return false
+  end
+  os.remove(backupPath)
+  return true
+end
+
+local function readFile(path)
+  local f = io.open(path, 'r')
+  if not f then return nil end
+  local text = f:read('*a')
+  f:close()
+  return text
+end
+
 local function touchFile(path)
   local f = io.open(path, 'a')
   if f then
@@ -62,6 +89,11 @@ local function safetyGates(config)
     allowInventoryUserdataIntrospectionProbes = config.allowInventoryUserdataIntrospectionProbes == true,
     allowInventoryArrayCountProbes = config.allowInventoryArrayCountProbes == true,
     allowInventoryElementDataAssetReadProbes = config.allowInventoryElementDataAssetReadProbes == true,
+    fullObserveEnabled = config.fullObserveEnabled == true,
+    allowPassiveObservationHooks = config.allowPassiveObservationHooks == true,
+    allowFullObserveInventoryStages = config.allowFullObserveInventoryStages == true,
+    allowFullObserveRuntimeDiscovery = config.allowFullObserveRuntimeDiscovery == true,
+    statusWriterEnabled = config.statusWriterEnabled == true,
     allowWriteProbes = config.allowWriteProbes == true,
     allowRpcProbes = config.allowRpcProbes == true,
     allowJoinedClientDeepProbes = config.allowJoinedClientDeepProbes == true,
@@ -69,12 +101,29 @@ local function safetyGates(config)
   }
 end
 
-local function hasUnsafeGate(config)
+local function unsafeActiveGates(config)
   local gates = safetyGates(config)
-  for _, value in pairs(gates) do
-    if value == true then return true end
+  local active = {}
+  for _, key in ipairs({
+    'allowHudTickHook',
+    'allowDeepArrayProbes',
+    'allowInventoryInfoProbes',
+    'allowRawIdentityEvidence',
+    'allowWriteProbes',
+    'allowRpcProbes',
+    'allowJoinedClientDeepProbes',
+    'allowUnknownRoleProbes'
+  }) do
+    if gates[key] == true then active[#active + 1] = key end
   end
-  return false
+  return active
+end
+
+local function fileExists(path)
+  local f = io.open(path, 'r')
+  if not f then return false end
+  f:close()
+  return true
 end
 
 local function activeResearchGates(config)
@@ -98,6 +147,11 @@ local function activeResearchGates(config)
     'allowInventoryUserdataIntrospectionProbes',
     'allowInventoryArrayCountProbes',
     'allowInventoryElementDataAssetReadProbes',
+    'fullObserveEnabled',
+    'allowPassiveObservationHooks',
+    'allowFullObserveInventoryStages',
+    'allowFullObserveRuntimeDiscovery',
+    'statusWriterEnabled',
     'allowWriteProbes',
     'allowRpcProbes',
     'allowJoinedClientDeepProbes',
@@ -108,6 +162,38 @@ local function activeResearchGates(config)
     end
   end
   return active
+end
+
+local function activeObservationGates(config)
+  local unsafe = {}
+  for _, key in ipairs(unsafeActiveGates(config)) do unsafe[key] = true end
+  local active = {}
+  for _, key in ipairs(activeResearchGates(config)) do
+    if not unsafe[key] then active[#active + 1] = key end
+  end
+  return active
+end
+
+local function readSequenceForSession(sessionId, config)
+  local maximum = tonumber(config.resumeEvidenceSequence) or 0
+  for _, path in ipairs({
+    'Mods/CrabRuntimeProbe/Scripts/results/full_observe_sequence.txt',
+    'Mods/CrabRuntimeProbe/Scripts/results/full_observe_sequence.txt.previous',
+    'Mods/CrabRuntimeProbe/Scripts/full_observe_sequence.txt',
+    'Mods/CrabRuntimeProbe/Scripts/full_observe_sequence.txt.previous'
+  }) do
+    local text = readFile(path)
+    if text then
+      local storedSession = text:match('sessionId=([^\r\n]+)')
+      local storedCampaign = text:match('campaignId=([^\r\n]+)')
+      local storedGeneration = tonumber(text:match('campaignGeneration=(%d+)'))
+      if storedSession == tostring(sessionId) and storedCampaign == tostring(config.campaignId)
+        and storedGeneration == tonumber(config.campaignGeneration) then
+        maximum = math.max(maximum, tonumber(text:match('sequence=(%d+)')) or 0)
+      end
+    end
+  end
+  return maximum
 end
 
 local function parseBuildInfo(lines)
@@ -136,7 +222,7 @@ local function withDefaults(record, sessionId, config)
   record.sessionId = sessionId
   record.game = 'Crab Champions'
   record.mod = 'CrabRuntimeProbe'
-  record.schemaVersion = 1
+  record.schemaVersion = record.schemaVersion or 1
   record.mode = record.mode or tostring(config.mode)
   record.tickDriver = record.tickDriver or tostring(config.tickDriver)
   record.safetyGates = record.safetyGates or safetyGates(config)
@@ -154,7 +240,8 @@ function evidenceWriter.new(sessionId, config)
     fallbackManifestPath = 'Mods/CrabRuntimeProbe/Scripts/session_manifest_' .. sessionId .. '.json',
     triedCreateResultDir = false,
     warnedFallback = false,
-    warnedFailure = false
+    warnedFailure = false,
+    activeEvidencePath = nil
   }
 
   function o:ensureResultDir()
@@ -168,34 +255,70 @@ function evidenceWriter.new(sessionId, config)
     if self.config.writeJsonlResults == false then return true end
     self:ensureResultDir()
     local line = json.encode(withDefaults(record, self.sessionId, self.config))
-    if not appendLine(self.evidencePath, line) then
-      if appendLine(self.fallbackEvidencePath, line) then
+    if self.activeEvidencePath and appendLine(self.activeEvidencePath, line) then return true end
+    local primaryCandidate = self.activeEvidencePath == self.evidencePath and self.fallbackEvidencePath or self.evidencePath
+    local fallbackCandidate = primaryCandidate == self.evidencePath and self.fallbackEvidencePath or self.evidencePath
+    if appendLine(primaryCandidate, line) then
+      self.activeEvidencePath = primaryCandidate
+      if primaryCandidate == self.fallbackEvidencePath and not self.warnedFallback then
+        crpLog.line('[CrabRuntimeProbe] primary evidence path unavailable; using fallback')
+        self.warnedFallback = true
+      end
+      return true
+    end
+    if appendLine(fallbackCandidate, line) then
+      self.activeEvidencePath = fallbackCandidate
+      if fallbackCandidate == self.fallbackEvidencePath then
         if not self.warnedFallback then
           crpLog.line('[CrabRuntimeProbe] primary evidence path unavailable; using fallback')
           self.warnedFallback = true
         end
-        return true
       end
+      return true
+    end
       if not self.warnedFailure then
         crpLog.line('[CrabRuntimeProbe] ERROR: evidence write failed for primary and fallback')
         self.warnedFailure = true
       end
-      return false
-    end
-    return true
+    return false
   end
 
   function o:writeSessionManifest(buildInfoLines)
     self:ensureResultDir()
-    if self.config.writeJsonlResults ~= false and not touchFile(self.evidencePath) then
-      touchFile(self.fallbackEvidencePath)
+    local existingText = readFile(self.manifestPath) or readFile(self.manifestPath .. '.previous')
+      or readFile(self.fallbackManifestPath) or readFile(self.fallbackManifestPath .. '.previous')
+    local existingOutputPath = existingText and existingText:match('"evidenceOutputPath"%s*:%s*"([^"]+)"') or nil
+    if self.config.writeJsonlResults ~= false then
+      if (existingOutputPath == self.evidencePath or existingOutputPath == self.fallbackEvidencePath)
+        and touchFile(existingOutputPath) then
+        self.activeEvidencePath = existingOutputPath
+      elseif fileExists(self.evidencePath) and touchFile(self.evidencePath) then
+        self.activeEvidencePath = self.evidencePath
+      elseif fileExists(self.fallbackEvidencePath) and touchFile(self.fallbackEvidencePath) then
+        self.activeEvidencePath = self.fallbackEvidencePath
+      elseif touchFile(self.evidencePath) then
+        self.activeEvidencePath = self.evidencePath
+      elseif touchFile(self.fallbackEvidencePath) then
+        self.activeEvidencePath = self.fallbackEvidencePath
+      end
     end
+    local existingSession = existingText and existingText:match('"sessionId"%s*:%s*"([^"]+)"') or nil
+    local existingStartedAt = existingSession == self.sessionId and existingText:match('"startedAt"%s*:%s*"([^"]+)"') or nil
+    local existingInitialSequence = existingSession == self.sessionId and tonumber(existingText:match('"initialEvidenceSequence"%s*:%s*(%d+)')) or nil
+    local existingRevision = existingSession == self.sessionId and tonumber(existingText:match('"manifestRevision"%s*:%s*(%d+)')) or 0
+    local now = utcNow()
+    local unsafeGates = unsafeActiveGates(self.config)
+    local resumeSequence = readSequenceForSession(self.sessionId, self.config)
     local manifest = {
       sessionId = self.sessionId,
-      startedAt = utcNow(),
+      startedAt = existingStartedAt or now,
+      resumedAt = existingStartedAt and now or '',
+      manifestRevision = existingRevision + 1,
+      initialEvidenceSequence = existingInitialSequence or resumeSequence,
+      resumeEvidenceSequence = resumeSequence,
       game = 'Crab Champions',
       mod = 'CrabRuntimeProbe',
-      schemaVersion = 1,
+      schemaVersion = self.config.fullObserveEnabled == true and 2 or 1,
       runtimeProbeVersion = 'unknown',
       buildInfo = parseBuildInfo(buildInfoLines),
       config = configSnapshot(self.config),
@@ -203,11 +326,14 @@ function evidenceWriter.new(sessionId, config)
       tickDriver = tostring(self.config.tickDriver),
       safetyGates = safetyGates(self.config),
       activeResearchGates = activeResearchGates(self.config),
-      warning = hasUnsafeGate(self.config) and ('research gates enabled: ' .. table.concat(activeResearchGates(self.config), ', ')) or ''
+      activeObservationGates = activeObservationGates(self.config),
+      unsafeActiveGates = unsafeGates,
+      evidenceOutputPath = self.activeEvidencePath or '',
+      warning = #unsafeGates > 0 and ('unsafe research gates enabled: ' .. table.concat(unsafeGates, ', ')) or ''
     }
     local text = json.encode(manifest)
-    if writeFile(self.manifestPath, text) then return true end
-    return writeFile(self.fallbackManifestPath, text)
+    if writeFileAtomic(self.manifestPath, text, self.sessionId) then return true end
+    return writeFileAtomic(self.fallbackManifestPath, text, self.sessionId)
   end
 
   return o

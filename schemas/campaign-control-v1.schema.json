@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/campaign-control-v1.schema.json",
+  "title": "CrabRuntimeProbe local diagnostic control",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schemaVersion", "sessionId", "campaignGeneration", "command", "requestedAtUtc"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "sessionId": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "campaignGeneration": { "type": "integer", "minimum": 1 },
+    "campaignId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "campaignName": { "type": "string", "maxLength": 160 },
+    "machineId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,96}$" },
+    "selectedRole": { "enum": ["host", "joined-client"] },
+    "command": {
+      "enum": ["prepare", "resume", "start-monitoring", "stop-observation", "finalize"]
+    },
+    "requestedAtUtc": { "type": "string", "format": "date-time" },
+    "diagnosticsOnly": { "const": true },
+    "safety": {
+      "type": "object",
+      "properties": {
+        "writesDisabled": { "const": true },
+        "rpcCallsDisabled": { "const": true },
+        "mutationDisabled": { "const": true },
+        "hudHookDisabled": { "const": true },
+        "rawIdentityDisabled": { "const": true }
+      }
+    }
+  }
+}

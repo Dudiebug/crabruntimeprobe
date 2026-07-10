@@ -75,9 +75,9 @@ foreach ($expected in @(
 
 $registry = Get-Content -Raw -LiteralPath $ProbeRegistryPath
 $helperStart = $registry.IndexOf("local function safeTostringPrefix")
-$helperEnd = $registry.IndexOf("local function classifyCrabHCSource")
+$helperEnd = $registry.IndexOf("local function buildInventoryArrayCountReadCache")
 $probeStart = $registry.IndexOf("Inventory.LocalArrays.UserdataIntrospection")
-$probeEnd = $registry.IndexOf("FindAllOf.CrabHC.Availability")
+$probeEnd = $registry.IndexOf("Inventory.LocalArrays.CountRead")
 if ($helperStart -lt 0 -or $helperEnd -le $helperStart -or $probeStart -lt 0 -or $probeEnd -le $probeStart) { throw "could not isolate userdata introspection probe block." }
 $introspectionBlock = $registry.Substring($helperStart, $helperEnd - $helperStart) + "`n" + $registry.Substring($probeStart, $probeEnd - $probeStart)
 foreach ($required in @(

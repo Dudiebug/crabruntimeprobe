@@ -39,8 +39,42 @@ local DEFAULT_CONFIG = {
   allowInventoryUserdataIntrospectionProbes = false,
   allowInventoryArrayCountProbes = false,
   allowInventoryElementDataAssetReadProbes = false,
+  fullObserveEnabled = false,
+  allowPassiveObservationHooks = false,
+  allowFullObserveInventoryStages = false,
+  allowFullObserveRuntimeDiscovery = false,
+  statusWriterEnabled = false,
   allowWriteProbes = false,
   allowRpcProbes = false,
+  campaignName = 'crabsync-full-observe',
+  campaignId = 'unassigned',
+  campaignSessionId = 'unassigned',
+  machineId = 'unassigned',
+  selectedRole = 'unselected',
+  campaignGeneration = 0,
+  resumeEvidenceSequence = 0,
+  resumeStatusSequence = 0,
+  statusRingSize = 4,
+  fullObserveHeartbeatSeconds = 1,
+  fullObserveInventoryIntervalSeconds = 2,
+  fullObserveInventoryHeartbeatSeconds = 30,
+  fullObserveCleanSamplesRequired = 3,
+  fullObserveStableSamplesRequired = 3,
+  fullObserveStableDwellSeconds = 2,
+  fullObserveHookGlobalRowCap = 2048,
+  fullObserveHookPerDescriptorRowCap = 128,
+  fullObserveHookMinIntervalSeconds = 1,
+  fullObserveHookTrackedDescriptorCap = 128,
+  fullObserveSlotStabilityWindowSeconds = 30,
+  fullObserveSlotStabilitySamplesRequired = 5,
+  fullObserveMaxInventoryItems = 32,
+  fullObserveMaxEnhancements = 16,
+  fullObserveMaxStageRowsPerCategory = 256,
+  resumeWeaponModsStage = 1,
+  resumeAbilityModsStage = 1,
+  resumeMeleeModsStage = 1,
+  resumePerksStage = 1,
+  resumeRelicsStage = 1,
   safeScalarWatchIntervalSeconds = 5,
   safeScalarWatchHeartbeatSeconds = 60,
   safeScalarWatchMaxSamples = 240,
@@ -139,7 +173,33 @@ if type(cfg.tickDriver) ~= 'string' or ALLOWED_TICK_DRIVERS[cfg.tickDriver] ~= t
   return
 end
 
+local function validOpaqueId(value, minimumLength, maximumLength)
+  local text = tostring(value or '')
+  minimumLength = minimumLength or 1
+  maximumLength = maximumLength or 96
+  return text ~= '' and text ~= 'unassigned' and #text >= minimumLength and #text <= maximumLength
+    and text:match('^[%w_%-]+$') ~= nil
+end
+
+local function validFullObserveIdentity(config)
+  local generation = tonumber(config.campaignGeneration)
+  local role = tostring(config.selectedRole or ''):lower():gsub('%s+', '-')
+  return validOpaqueId(config.campaignId, 1, 128)
+    and validOpaqueId(config.campaignSessionId, 8, 96)
+    and validOpaqueId(config.machineId, 8, 96)
+    and (role == 'host' or role == 'joined-client')
+    and generation ~= nil and generation >= 1 and math.floor(generation) == generation
+end
+
 local sessionId = os.date('!%Y%m%dT%H%M%SZ')
+if cfg.fullObserveEnabled == true and cfg.probeSet == 'crabsync-full-observe' then
+  if validFullObserveIdentity(cfg) then
+    sessionId = tostring(cfg.campaignSessionId)
+  else
+    log('[CrabRuntimeProbe] ERROR: full observe requires assigned campaign/session/machine/role/generation identity')
+    return
+  end
+end
 local writer = writerFactory.new(sessionId, cfg)
 local evidenceWriter = evidenceWriterFactory.new(sessionId, cfg)
 log('[CrabRuntimeProbe] boot phase: writer initialized')
@@ -174,6 +234,11 @@ log('[CrabRuntimeProbe] safety allowHudTickHook=' .. tostring(cfg.allowHudTickHo
   .. ' allowInventoryUserdataIntrospectionProbes=' .. tostring(cfg.allowInventoryUserdataIntrospectionProbes)
   .. ' allowInventoryArrayCountProbes=' .. tostring(cfg.allowInventoryArrayCountProbes)
   .. ' allowInventoryElementDataAssetReadProbes=' .. tostring(cfg.allowInventoryElementDataAssetReadProbes)
+  .. ' fullObserveEnabled=' .. tostring(cfg.fullObserveEnabled)
+  .. ' allowPassiveObservationHooks=' .. tostring(cfg.allowPassiveObservationHooks)
+  .. ' allowFullObserveInventoryStages=' .. tostring(cfg.allowFullObserveInventoryStages)
+  .. ' allowFullObserveRuntimeDiscovery=' .. tostring(cfg.allowFullObserveRuntimeDiscovery)
+  .. ' statusWriterEnabled=' .. tostring(cfg.statusWriterEnabled)
   .. ' allowWriteProbes=' .. tostring(cfg.allowWriteProbes)
   .. ' allowRpcProbes=' .. tostring(cfg.allowRpcProbes))
 log('[CrabRuntimeProbe] results primary=' .. tostring(writer.resultPath))
@@ -201,10 +266,25 @@ end
 local safe = require('safe_access')
 local runner = require('probe_runner')
 local state = runner.new(cfg, safe, writer, evidenceWriter)
+local fullObserveCoordinator = nil
+if cfg.fullObserveEnabled == true and cfg.probeSet == 'crabsync-full-observe' then
+  local coordinatorOk, coordinatorFactory = pcall(require, 'full_observe_coordinator')
+  if coordinatorOk and type(coordinatorFactory) == 'table' and type(coordinatorFactory.new) == 'function' then
+    local newOk, coordinatorOrErr = pcall(coordinatorFactory.new, sessionId, cfg, safe, evidenceWriter)
+    if newOk then
+      fullObserveCoordinator = coordinatorOrErr
+    else
+      log('[CrabRuntimeProbe] ERROR: full observe coordinator initialization failed: ' .. tostring(coordinatorOrErr))
+    end
+  else
+    log('[CrabRuntimeProbe] ERROR: full observe coordinator unavailable: ' .. tostring(coordinatorFactory))
+  end
+end
 
 local function tickOnce()
   local ok, err = pcall(function()
     state:onTick()
+    if fullObserveCoordinator then fullObserveCoordinator:onTick(state) end
   end)
   if not ok then
     log('[CrabRuntimeProbe] tick error: ' .. tostring(err))
@@ -275,6 +355,13 @@ end
 if registeredOrError ~= true then
   log('[CrabRuntimeProbe] boot phase: startup complete')
   return
+end
+
+if fullObserveCoordinator then
+  local startOk, startErr = pcall(function() return fullObserveCoordinator:start() end)
+  if not startOk then
+    log('[CrabRuntimeProbe] ERROR: full observe coordinator start failed: ' .. tostring(startErr))
+  end
 end
 
 log('[CrabRuntimeProbe] boot phase: startup complete')

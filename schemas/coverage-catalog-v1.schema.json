@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Dudiebug/crabruntimeprobe/schemas/coverage-catalog-v1.schema.json",
+  "title": "CrabSync Coverage Catalog v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "generatedAt",
+    "catalogHash",
+    "sourceProvenance",
+    "summary",
+    "policyDecisions",
+    "readinessVerdicts",
+    "views",
+    "hooks",
+    "rows"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "coverage-catalog-v1"
+    },
+    "generatedAt": {
+      "type": "string"
+    },
+    "catalogHash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sourceProvenance": {
+      "type": "object"
+    },
+    "summary": {
+      "type": "object"
+    },
+    "policyDecisions": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "readinessVerdicts": {
+      "type": "object"
+    },
+    "views": {
+      "type": "object"
+    },
+    "hooks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/hook"
+      }
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/row"
+      }
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "required": [
+        "rowId",
+        "id",
+        "category",
+        "symbolPath",
+        "type",
+        "source",
+        "relevance",
+        "relevanceToCrabSync",
+        "readStatus",
+        "naturalObservationStatus",
+        "argumentMetadataStatus",
+        "ownershipAuthorityStatus",
+        "visibilityDirection",
+        "lifecycleCoverage",
+        "persistenceUiCoverage",
+        "writeApplyStatus",
+        "safetyClassification",
+        "terminalDisposition",
+        "coverageDisposition",
+        "nextRequiredObservation",
+        "checklistLinks",
+        "checklistLinkage"
+      ],
+      "properties": {
+        "rowId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "symbolPath": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "enum": [
+            "property",
+            "function",
+            "RPC",
+            "OnRep",
+            "multicast",
+            "struct field",
+            "actor",
+            "event"
+          ]
+        },
+        "source": {
+          "enum": [
+            "object dump",
+            "runtime evidence",
+            "both"
+          ]
+        },
+        "relevance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relevanceToCrabSync": {
+          "type": "string",
+          "minLength": 1
+        },
+        "readStatus": {
+          "type": "string",
+          "minLength": 1
+        },
+        "naturalObservationStatus": {
+          "type": "string",
+          "minLength": 1
+        },
+        "argumentMetadataStatus": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ownershipAuthorityStatus": {
+          "type": "string",
+          "minLength": 1
+        },
+        "visibilityDirection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lifecycleCoverage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "persistenceUiCoverage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "writeApplyStatus": {
+          "type": "string",
+          "minLength": 1
+        },
+        "safetyClassification": {
+          "type": "string",
+          "minLength": 1
+        },
+        "terminalDisposition": {
+          "enum": [
+            "confirmed_clean",
+            "unsafe_rejected",
+            "unsupported",
+            "policy_excluded",
+            "needs_coverage"
+          ]
+        },
+        "coverageDisposition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nextRequiredObservation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "checklistLinks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "checklistLinkage": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "hook": {
+      "type": "object",
+      "required": [
+        "id",
+        "category",
+        "symbolPath",
+        "hookPath",
+        "ownerPath",
+        "type",
+        "argumentSchema",
+        "checklistLinks",
+        "safetyClassification",
+        "preStateFields",
+        "postStateFields"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "symbolPath": {
+          "type": "string"
+        },
+        "hookPath": {
+          "type": "string"
+        },
+        "ownerPath": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "argumentSchema": {
+          "type": "array"
+        },
+        "checklistLinks": {
+          "type": "array"
+        },
+        "safetyClassification": {
+          "const": "passive-observation-only"
+        },
+        "preStateFields": {
+          "type": "array"
+        },
+        "postStateFields": {
+          "type": "array"
+        }
+      }
+    }
+  }
+}

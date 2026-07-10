@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/evidence-bundle-v1.schema.json",
+  "title": "CrabRuntimeProbe evidence bundle manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "bundleFormat",
+    "campaignId",
+    "campaignName",
+    "profileId",
+    "campaignGeneration",
+    "machineId",
+    "sessionId",
+    "selectedRole",
+    "preparedAtUtc",
+    "collectedAtUtc",
+    "crashSuspected",
+    "dirtyEvidence",
+    "evidenceFileCount",
+    "catalogSchemaVersion",
+    "catalogHash",
+    "safety",
+    "manifestSelfExcluded",
+    "files"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "bundleFormat": { "const": "crabruntimeprobe-evidence-bundle-v1" },
+    "campaignId": { "type": "string", "minLength": 1 },
+    "campaignName": { "type": "string", "minLength": 1 },
+    "profileId": { "const": "crabsync-full-observe" },
+    "campaignGeneration": { "type": "integer", "minimum": 1 },
+    "machineId": { "type": "string", "minLength": 1 },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "selectedRole": { "enum": ["host", "joined-client"] },
+    "preparedAtUtc": { "type": "string", "format": "date-time" },
+    "collectedAtUtc": { "type": "string", "format": "date-time" },
+    "crashSuspected": { "type": "boolean" },
+    "dirtyEvidence": { "type": "boolean" },
+    "evidenceFileCount": { "type": "integer", "minimum": 0 },
+    "catalogSchemaVersion": { "type": "string", "minLength": 1 },
+    "catalogHash": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "writesDisabled",
+        "rpcCallsDisabled",
+        "mutationDisabled",
+        "rawIdentityDisabled",
+        "hudHookDisabled"
+      ],
+      "properties": {
+        "writesDisabled": { "const": true },
+        "rpcCallsDisabled": { "const": true },
+        "mutationDisabled": { "const": true },
+        "rawIdentityDisabled": { "const": true },
+        "hudHookDisabled": { "const": true }
+      }
+    },
+    "manifestSelfExcluded": { "const": true },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sizeBytes", "hash", "sourceHash", "kind"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "not": { "pattern": "(^[A-Za-z]:|^[/\\\\]|\\.\\.)" }
+          },
+          "sizeBytes": { "type": "integer", "minimum": 0 },
+          "hash": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+          "sourceHash": { "type": "string", "pattern": "^[A-Fa-f0-9]{64}$" },
+          "kind": {
+            "enum": [
+              "canonical-byte-copy",
+              "provenance-byte-copy",
+              "crash-metadata-only",
+              "redacted-derivative",
+              "generated-report"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

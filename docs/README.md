@@ -2,6 +2,7 @@
 
 ## RuntimeProbe Operation Docs
 
+- [CrabSync Full-Observe Campaign Guide](CRABSYNC_FULL_CAMPAIGN_GUIDE.md)
 - [CrabRuntimeProbe Field Guide](CRABRUNTIMEPROBE_FIELD_GUIDE.md)
 - [CrabRuntimeProbe Script Reference](CRABRUNTIMEPROBE_SCRIPT_REFERENCE.md)
 - [Runtime Contexts](RUNTIME_CONTEXTS.md)
@@ -11,6 +12,7 @@
 
 ## Generated Evidence Docs
 
+- [CrabSync Coverage Catalog](CRABSYNC_COVERAGE_CATALOG.md)
 - [Runtime Evidence Index](RUNTIME_EVIDENCE_INDEX.md)
 - [Safe Access Matrix](SAFE_ACCESS_MATRIX.md)
 - [Probe Results](PROBE_RESULTS.md)

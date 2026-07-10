@@ -6,6 +6,8 @@ local function try(fn)
   return val, nil
 end
 
+safe.try = try
+
 function safe.isValidObject(obj)
   if obj == nil then return false end
   local method, methodErr = try(function() return obj.IsValid end)
@@ -184,6 +186,210 @@ function safe.countArrayLimited(arr, maxElements)
     if count >= maxElements then break end
   end
   return count, nil
+end
+
+
+function safe.fingerprintValue(value)
+  local text = tostring(value or '')
+  if text == '' then return '', 0 end
+  local hash = 2166136261
+  for i = 1, #text do
+    hash = (hash * 16777619 + string.byte(text, i)) % 4294967296
+  end
+  return string.format('%08x', hash), #text
+end
+
+function safe.getHookParam(param)
+  if param == nil then return nil, nil end
+  return try(function() return param:get() end)
+end
+
+function safe.resolveHookContext(contextParam)
+  if safe.isValidObject(contextParam) then return contextParam, nil end
+  local value, err = safe.getHookParam(contextParam)
+  if err then return nil, err end
+  if safe.isValidObject(value) then return value, nil end
+  return nil, 'invalid_hook_context'
+end
+
+local function cleanSummary(value, cap)
+  local text = tostring(value or ''):gsub('[\r\n\t]+', ' '):gsub('%s%s+', ' ')
+  cap = cap or 160
+  if #text > cap then text = text:sub(1, cap - 3) .. '...' end
+  return text
+end
+
+function safe.getUnrealType(value)
+  if value == nil then return '' end
+  local unrealType, err = try(function()
+    if type(value.type) ~= 'function' then return '' end
+    return value:type()
+  end)
+  if err then return '' end
+  return tostring(unrealType or '')
+end
+
+function safe.redactedObjectSummary(obj, allowAssetPath)
+  if not safe.isValidObject(obj) then
+    return { status = 'invalid', className = '', pathFingerprint = '', pathSummary = '<invalid>' }
+  end
+  local fullName = safe.getFullName(obj)
+  local className = safe.getObjectClassName(obj)
+  local fingerprint = safe.fingerprintValue(fullName or tostring(obj))
+  local pathSummary = '<redacted-instance>'
+  if allowAssetPath == true then
+    local text = tostring(fullName or '')
+    local assetPath = text:match('(/Game/[^%s:]+)')
+    if assetPath then pathSummary = cleanSummary(assetPath, 192) end
+  end
+  return {
+    status = 'observed-redacted',
+    className = tostring(className or ''),
+    pathFingerprint = fingerprint,
+    pathSummary = pathSummary
+  }
+end
+
+function safe.summarizeHookArgument(param, spec, options)
+  spec = spec or {}
+  options = options or {}
+  local summary = {
+    name = tostring(spec.name or ''),
+    direction = tostring(spec.direction or 'in'),
+    propertyType = tostring(spec.propertyType or ''),
+    redaction = tostring(spec.redaction or 'redacted'),
+    status = 'unsupported',
+    valueKind = 'unknown',
+    valueSummary = 'not read'
+  }
+  if summary.redaction == 'omit' or spec.safeSummary == false or spec.safeSummary == 'none' then
+    summary.status = 'redacted'
+    summary.valueSummary = '<redacted>'
+    return summary
+  end
+
+  local requestedSummary = tostring(spec.safeSummary or '')
+  if requestedSummary == 'shape-and-count-only-until-staged-proof' and options.allowShapeCount ~= true then
+    summary.status = 'deferred'
+    summary.valueKind = 'unknown'
+    summary.valueSummary = 'shape/count deferred until matching staged proof'
+    return summary
+  end
+
+  local value, err = safe.getHookParam(param)
+  if err then
+    summary.status = 'error'
+    summary.valueSummary = cleanSummary(err, 120)
+    return summary
+  end
+  if value == nil then
+    summary.status = 'nil'
+    summary.valueKind = 'nil'
+    summary.valueSummary = 'nil'
+    return summary
+  end
+
+  local kind = type(value)
+  summary.valueKind = kind
+  local safeSummary = requestedSummary
+  if kind == 'boolean' and (safeSummary == 'scalar' or safeSummary == 'boolean') then
+    summary.status = 'observed'
+    summary.valueSummary = tostring(value)
+  elseif kind == 'number' and (safeSummary == 'scalar' or safeSummary == 'number' or safeSummary == 'enum') then
+    if value == value and value ~= math.huge and value ~= -math.huge then
+      summary.status = 'observed'
+      summary.valueSummary = tostring(value)
+    else
+      summary.status = 'unsupported'
+      summary.valueSummary = 'non-finite number'
+    end
+  elseif kind == 'string' then
+    local fingerprint, length = safe.fingerprintValue(value)
+    summary.status = 'observed-redacted'
+    summary.valueSummary = 'fingerprint=' .. fingerprint .. ' length=' .. tostring(length)
+  elseif safe.isValidObject(value) and (safeSummary == 'object' or safeSummary == 'objectIdentity' or safeSummary == 'uobject'
+    or safeSummary == 'class-and-redacted-full-name' or safeSummary == 'object-identity-redacted') then
+    local identity = safe.redactedObjectSummary(value, false)
+    summary.status = 'observed-redacted'
+    summary.valueKind = 'object'
+    summary.valueSummary = 'class=' .. cleanSummary(identity.className or '', 80) .. ' pathFingerprint=' .. tostring(identity.pathFingerprint or '')
+  elseif safeSummary == 'shape-and-count-only-until-staged-proof' then
+    local count, countErr = safe.getArrayLength(value)
+    summary.valueKind = type(value)
+    if countErr then
+      summary.status = 'observed-shape-only'
+      summary.valueSummary = 'kind=' .. type(value) .. ' count=unsupported'
+    else
+      summary.status = 'observed-redacted'
+      summary.valueSummary = 'kind=' .. type(value) .. ' count=' .. tostring(count)
+    end
+  else
+    summary.status = 'unsupported'
+    summary.valueSummary = '<' .. kind .. ' redacted>'
+  end
+  return summary
+end
+
+function safe.getArrayLength(value)
+  if value == nil then return nil, 'nil_array' end
+  local count, err = try(function() return #value end)
+  if err then return nil, err end
+  if type(count) ~= 'number' or count < 0 or math.floor(count) ~= count then
+    return nil, 'invalid_array_length'
+  end
+  return count, nil
+end
+
+function safe.getArrayIndex(value, index)
+  if value == nil then return nil, 'nil_array' end
+  if type(index) ~= 'number' or index < 0 or math.floor(index) ~= index then
+    return nil, 'invalid_index'
+  end
+  return try(function() return value[index] end)
+end
+
+function safe.getKnownField(value, fieldName)
+  if value == nil then return nil, 'nil_parent' end
+  local unrealType = safe.getUnrealType(value)
+  if unrealType:find('ScriptStruct') or unrealType:find('Struct') then
+    return safe.getStructField(value, fieldName)
+  end
+  if unrealType:find('LocalUnrealParam') or unrealType:find('RemoteUnrealParam') then
+    local unwrapped, unwrapErr = safe.unwrapKnownValue(value)
+    if unwrapErr then return nil, unwrapErr end
+    local unwrappedType = safe.getUnrealType(unwrapped)
+    if unwrappedType:find('ScriptStruct') or unwrappedType:find('Struct') or type(unwrapped) == 'table' then
+      return safe.getStructField(unwrapped, fieldName)
+    end
+    if safe.isValidObject(unwrapped) then return safe.getProperty(unwrapped, fieldName) end
+    return nil, 'unsupported_unwrapped_field_parent'
+  end
+  if type(value) == 'table' then return safe.getStructField(value, fieldName) end
+  if safe.isValidObject(value) then return safe.getProperty(value, fieldName) end
+  return safe.getStructField(value, fieldName)
+end
+
+function safe.unwrapKnownValue(value)
+  if value == nil then return nil, nil end
+  local unrealType = safe.getUnrealType(value)
+  if unrealType:find('ScriptStruct') or unrealType:find('Struct') then return value, nil end
+  if safe.isValidObject(value) and not unrealType:find('UnrealParam') then return value, nil end
+  local unwrapped, err = try(function() return value:get() end)
+  if err then return nil, err end
+  return unwrapped, nil
+end
+
+function safe.authorityStatus(obj)
+  if not safe.isValidObject(obj) then return 'unknown' end
+  for _, fieldName in ipairs({ 'LocalRole', 'Role' }) do
+    local value, err = safe.getProperty(obj, fieldName)
+    if err == nil and value ~= nil then
+      local text = tostring(value)
+      if text:find('Authority') then return 'runtime-authority' end
+      if text:find('AutonomousProxy') or text:find('SimulatedProxy') then return 'runtime-non-authority' end
+    end
+  end
+  return 'unknown'
 end
 
 return safe

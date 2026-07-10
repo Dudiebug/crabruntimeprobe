@@ -9,7 +9,14 @@ $script:CrabRuntimeProbeRequiredModFiles = @(
   "Scripts\probe_registry.lua",
   "Scripts\probe_runner.lua",
   "Scripts\evidence_writer.lua",
-  "Scripts\result_writer.lua"
+  "Scripts\result_writer.lua",
+  "Scripts\record_builder.lua",
+  "Scripts\campaign_state.lua",
+  "Scripts\status_writer.lua",
+  "Scripts\passive_hook_manager.lua",
+  "Scripts\inventory_stage_manager.lua",
+  "Scripts\full_observe_coordinator.lua",
+  "Scripts\crabsync_catalog.lua"
 )
 
 $script:CrabRuntimeProbeRequiredConfigDefaults = [ordered]@{
@@ -46,8 +53,42 @@ $script:CrabRuntimeProbeRequiredConfigDefaults = [ordered]@{
   allowInventoryUserdataIntrospectionProbes = "false"
   allowInventoryArrayCountProbes = "false"
   allowInventoryElementDataAssetReadProbes = "false"
+  fullObserveEnabled = "false"
+  allowPassiveObservationHooks = "false"
+  allowFullObserveInventoryStages = "false"
+  allowFullObserveRuntimeDiscovery = "false"
+  statusWriterEnabled = "false"
   allowWriteProbes = "false"
   allowRpcProbes = "false"
+  campaignName = "crabsync-full-observe"
+  campaignId = "unassigned"
+  campaignSessionId = "unassigned"
+  machineId = "unassigned"
+  selectedRole = "unselected"
+  campaignGeneration = "0"
+  resumeEvidenceSequence = "0"
+  resumeStatusSequence = "0"
+  statusRingSize = "4"
+  fullObserveHeartbeatSeconds = "1"
+  fullObserveInventoryIntervalSeconds = "2"
+  fullObserveInventoryHeartbeatSeconds = "30"
+  fullObserveCleanSamplesRequired = "3"
+  fullObserveStableSamplesRequired = "3"
+  fullObserveStableDwellSeconds = "2"
+  fullObserveHookGlobalRowCap = "2048"
+  fullObserveHookPerDescriptorRowCap = "128"
+  fullObserveHookMinIntervalSeconds = "1"
+  fullObserveHookTrackedDescriptorCap = "128"
+  fullObserveSlotStabilityWindowSeconds = "30"
+  fullObserveSlotStabilitySamplesRequired = "5"
+  fullObserveMaxInventoryItems = "32"
+  fullObserveMaxEnhancements = "16"
+  fullObserveMaxStageRowsPerCategory = "256"
+  resumeWeaponModsStage = "1"
+  resumeAbilityModsStage = "1"
+  resumeMeleeModsStage = "1"
+  resumePerksStage = "1"
+  resumeRelicsStage = "1"
   safeScalarWatchIntervalSeconds = "5"
   safeScalarWatchHeartbeatSeconds = "60"
   safeScalarWatchMaxSamples = "240"
