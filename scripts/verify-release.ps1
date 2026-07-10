@@ -87,7 +87,7 @@ if ((Test-Path -LiteralPath $mainLuaPath -PathType Leaf) -and
       $mainLua -notmatch [regex]::Escape("dashboard_autostart.txt")) {
     Add-Problem "Runtime payload does not invoke dashboard autostart."
   }
-  foreach ($token in @("--game-autostart", "os.execute", "start \"\" /b")) {
+  foreach ($token in @('--game-autostart', 'os.execute', 'start "" /b')) {
     if ($autoStartLua -notmatch [regex]::Escape($token)) {
       Add-Problem "Dashboard autostart contract is missing: $token"
     }
