@@ -22,6 +22,22 @@ public enum ChecklistDisplayState
     NotApplicable
 }
 
+public enum PlayGuideDisplayState
+{
+    ToDo,
+    InProgress,
+    Done,
+    Waiting,
+    Retry
+}
+
+public enum PlayGuideFilter
+{
+    ToDo,
+    All,
+    Completed
+}
+
 public enum EvidenceCleanliness
 {
     Clean,
@@ -197,6 +213,70 @@ public sealed record ChecklistViewItem(
     private static string FormatTimestamp(DateTimeOffset? timestamp) => timestamp is { } value
         ? value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'", System.Globalization.CultureInfo.InvariantCulture)
         : "—";
+}
+
+public sealed record PlayGuideSubtask(
+    string Label,
+    PlayGuideDisplayState State)
+{
+    public string StateText => PlayGuideStateNames.Text(State);
+    public string StateIcon => PlayGuideStateNames.Icon(State);
+    public string AutomationName => $"{Label}: {StateText}";
+}
+
+public sealed record PlayGuideAction(
+    string Id,
+    string CategoryId,
+    string Title,
+    string Instruction,
+    PlayGuideDisplayState State,
+    IReadOnlyList<string> LinkedChecklistIds,
+    IReadOnlyList<PlayGuideSubtask> Subtasks,
+    bool IsAutomatic,
+    bool HasMappingWarning)
+{
+    public string StateText => PlayGuideStateNames.Text(State);
+    public string StateIcon => PlayGuideStateNames.Icon(State);
+    public string AutomationName => $"{Title}: {StateText}";
+    public bool IsDone => State == PlayGuideDisplayState.Done;
+    public bool HasSubtasks => Subtasks.Count > 0;
+}
+
+public sealed record PlayGuideCategory(
+    string Id,
+    string Name,
+    int CompletedCount,
+    int TotalCount,
+    double Percentage,
+    string NextRecommendedAction,
+    IReadOnlyList<PlayGuideAction> Actions)
+{
+    public string CompletionText => $"{CompletedCount} of {TotalCount} done";
+    public string PercentageText => $"{Percentage:0}%";
+    public string AutomationName => $"{Name}: {CompletionText}, {PercentageText}";
+}
+
+public static class PlayGuideStateNames
+{
+    public static string Text(PlayGuideDisplayState state) => state switch
+    {
+        PlayGuideDisplayState.ToDo => "TO DO",
+        PlayGuideDisplayState.InProgress => "IN PROGRESS",
+        PlayGuideDisplayState.Done => "DONE",
+        PlayGuideDisplayState.Waiting => "WAITING",
+        PlayGuideDisplayState.Retry => "RETRY",
+        _ => "TO DO"
+    };
+
+    public static string Icon(PlayGuideDisplayState state) => state switch
+    {
+        PlayGuideDisplayState.ToDo => "○",
+        PlayGuideDisplayState.InProgress => "◔",
+        PlayGuideDisplayState.Done => "✓",
+        PlayGuideDisplayState.Waiting => "…",
+        PlayGuideDisplayState.Retry => "↻",
+        _ => "○"
+    };
 }
 
 public sealed record CoverageRow(

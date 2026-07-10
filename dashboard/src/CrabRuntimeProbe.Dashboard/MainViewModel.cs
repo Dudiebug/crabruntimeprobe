@@ -25,6 +25,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly DashboardResourceLocator _resourceLocator = new();
     private readonly LiveStatusReader _statusReader = new();
     private readonly CapabilityReadinessService _readinessService = new();
+    private readonly PlayGuideReducer _playGuideReducer = new();
     private readonly CancellationTokenSource _lifetime = new();
     private CampaignService? _campaignService;
     private LocalCampaignState? _campaign;
@@ -43,12 +44,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _stopRequested;
     private Process? _monitoredProcess;
     private CoverageRow? _selectedCoverage;
+    private IReadOnlyList<ChecklistDefinition> _checklistDefinitions = ChecklistCatalog.All;
+    private IReadOnlyList<PlayGuideCategory> _allPlayGuideCategories = Array.Empty<PlayGuideCategory>();
+    private PlayGuideFilter _playGuideFilter = PlayGuideFilter.ToDo;
 
     public MainViewModel(string? fixture, bool demo)
     {
         _fixture = fixture;
         _demo = demo;
         Checklist = new ObservableCollection<ChecklistViewItem>();
+        PlayGuideCategories = new ObservableCollection<PlayGuideCategory>();
         Coverage = new ObservableCollection<CoverageRow>();
         Readiness = new ObservableCollection<CapabilityReadiness>();
         ChecklistView = CollectionViewSource.GetDefaultView(Checklist);
@@ -75,6 +80,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public ObservableCollection<ChecklistViewItem> Checklist { get; }
+    public ObservableCollection<PlayGuideCategory> PlayGuideCategories { get; }
     public ObservableCollection<CoverageRow> Coverage { get; }
     public ObservableCollection<CapabilityReadiness> Readiness { get; }
     public ICollectionView ChecklistView { get; }
@@ -120,8 +126,56 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _selectedRole;
         set
         {
-            if (Set(ref _selectedRole, value)) _ = SavePreferencesAsync();
+            if (!Set(ref _selectedRole, value)) return;
+            Raise(nameof(IsHosting));
+            Raise(nameof(IsJoiningFriend));
+            Raise(nameof(RoleSummary));
+            RefreshPlayGuide();
+            _ = SavePreferencesAsync();
         }
+    }
+
+    public bool IsHosting
+    {
+        get => SelectedRole == CampaignRole.Host;
+        set { if (value) SelectedRole = CampaignRole.Host; }
+    }
+
+    public bool IsJoiningFriend
+    {
+        get => SelectedRole == CampaignRole.JoinedClient;
+        set { if (value) SelectedRole = CampaignRole.JoinedClient; }
+    }
+
+    public PlayGuideFilter SelectedPlayGuideFilter
+    {
+        get => _playGuideFilter;
+        private set
+        {
+            if (!Set(ref _playGuideFilter, value)) return;
+            Raise(nameof(IsPlayGuideToDoFilter));
+            Raise(nameof(IsPlayGuideAllFilter));
+            Raise(nameof(IsPlayGuideCompletedFilter));
+            ApplyPlayGuideFilter();
+        }
+    }
+
+    public bool IsPlayGuideToDoFilter
+    {
+        get => SelectedPlayGuideFilter == PlayGuideFilter.ToDo;
+        set { if (value) SelectedPlayGuideFilter = PlayGuideFilter.ToDo; }
+    }
+
+    public bool IsPlayGuideAllFilter
+    {
+        get => SelectedPlayGuideFilter == PlayGuideFilter.All;
+        set { if (value) SelectedPlayGuideFilter = PlayGuideFilter.All; }
+    }
+
+    public bool IsPlayGuideCompletedFilter
+    {
+        get => SelectedPlayGuideFilter == PlayGuideFilter.Completed;
+        set { if (value) SelectedPlayGuideFilter = PlayGuideFilter.Completed; }
     }
 
     public string Activity { get => _activity; private set => Set(ref _activity, value); }
@@ -161,6 +215,33 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ? $"sequence {Snapshot.Sequence} - heartbeat {Snapshot.HeartbeatAtUtc:HH:mm:ss} UTC{(Status.IsStale ? " - STALE" : string.Empty)}"
         : "No valid status snapshot yet";
     public string ChecklistSummary => $"{Checklist.Count(item => item.IsComplete)} / {Checklist.Count} checklist observations complete";
+    public string PlayGuideOverallSummary
+    {
+        get
+        {
+            var actions = _allPlayGuideCategories.SelectMany(category => category.Actions).ToArray();
+            return $"{actions.Count(action => action.IsDone)} of {actions.Length} play actions done";
+        }
+    }
+    public double PlayGuideOverallPercentage
+    {
+        get
+        {
+            var actions = _allPlayGuideCategories.SelectMany(category => category.Actions).ToArray();
+            return actions.Length == 0 ? 0 : Math.Round(actions.Count(action => action.IsDone) * 100d / actions.Length);
+        }
+    }
+    public string PlayGuideFilterSummary => SelectedPlayGuideFilter switch
+    {
+        PlayGuideFilter.Completed => "Showing completed actions",
+        PlayGuideFilter.All => "Showing all actions",
+        _ => "Showing actions that still need attention"
+    };
+    public string PlayGuideEmptyMessage => PlayGuideCategories.Count == 0
+        ? SelectedPlayGuideFilter == PlayGuideFilter.Completed
+            ? "No completed actions yet—play normally and this view will update on its own."
+            : "No actions match this filter."
+        : string.Empty;
     public string CoverageSummary => $"{Coverage.Count(row => !row.NeedsCoverage)} / {Coverage.Count} catalog rows terminal - {Coverage.Count(row => row.NeedsCoverage)} need coverage";
     public string CampaignIdentitySummary
     {
@@ -229,6 +310,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             _needsCoverageOnly = preferences.NeedsCoverageOnly;
             Raise(nameof(CampaignName));
             Raise(nameof(SelectedRole));
+            Raise(nameof(IsHosting));
+            Raise(nameof(IsJoiningFriend));
             Raise(nameof(GameDirectory));
             Raise(nameof(NeedsCoverageOnly));
             CoverageView.Refresh();
@@ -237,6 +320,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             _campaignService = new CampaignService(_store, _resourceLocator);
             var definitions = await new ChecklistDefinitionLoader()
                 .LoadAuthoritativeOrFallbackAsync(resources, _lifetime.Token);
+            _checklistDefinitions = definitions;
             var catalogPath = Path.Combine(resources.CampaignRoot, "crabsync_coverage_catalog.json");
             if (!File.Exists(catalogPath)) throw new FileNotFoundException("Authoritative coverage catalog is missing.", catalogPath);
             Replace(Coverage, await new CoverageCatalogReader().ReadAsync(catalogPath, _lifetime.Token));
@@ -252,6 +336,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 _lastBundle = Campaign.LastBundlePath;
                 Raise(nameof(CampaignName));
                 Raise(nameof(SelectedRole));
+                Raise(nameof(IsHosting));
+                Raise(nameof(IsJoiningFriend));
                 Raise(nameof(GameDirectory));
                 Raise(nameof(LastBundle));
             }
@@ -281,7 +367,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 Status = await _statusReader.ReadLatestAsync(Campaign.StatusDirectory, cancellationToken: _lifetime.Token);
             }
 
-            Replace(Checklist, new ChecklistReducer(definitions).Reduce(Status.Snapshot));
+            RefreshChecklist(Status.Snapshot);
             Activity = _demo ? "Demo mode - no game files are changed" : "Ready - passive observation only";
             RaiseSummaryProperties();
             _ = MonitorAsync(definitions, _lifetime.Token);
@@ -434,6 +520,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             _monitoredProcess = null;
             Status = new LiveStatusReadResult(LiveStatusSnapshot.Empty, false, true, false,
                 "No active campaign", DateTimeOffset.UtcNow);
+            RefreshChecklist(Status.Snapshot);
             Activity = "Dashboard campaign state reset - canonical evidence was not deleted";
         }
         catch (Exception ex) { ShowError(ex); }
@@ -454,7 +541,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 await Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     Status = next;
-                    Replace(Checklist, new ChecklistReducer(definitions).Reduce(next.Snapshot));
+                    RefreshChecklist(next.Snapshot);
                     RaiseSummaryProperties();
                 });
 
@@ -563,6 +650,36 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private bool FilterCoverage(object value) => value is CoverageRow row && (!NeedsCoverageOnly || row.NeedsCoverage);
 
+    private void RefreshChecklist(LiveStatusSnapshot snapshot)
+    {
+        Replace(Checklist, new ChecklistReducer(_checklistDefinitions).Reduce(snapshot));
+        RefreshPlayGuide();
+    }
+
+    private void RefreshPlayGuide()
+    {
+        _allPlayGuideCategories = _playGuideReducer.Reduce(Checklist.ToArray(), SelectedRole);
+        ApplyPlayGuideFilter();
+    }
+
+    private void ApplyPlayGuideFilter()
+    {
+        var filtered = _allPlayGuideCategories
+            .Select(category => category with
+            {
+                Actions = category.Actions
+                    .Where(action => PlayGuideReducer.MatchesFilter(action, SelectedPlayGuideFilter))
+                    .ToArray()
+            })
+            .Where(category => category.Actions.Count > 0)
+            .ToArray();
+        Replace(PlayGuideCategories, filtered);
+        Raise(nameof(PlayGuideOverallSummary));
+        Raise(nameof(PlayGuideOverallPercentage));
+        Raise(nameof(PlayGuideFilterSummary));
+        Raise(nameof(PlayGuideEmptyMessage));
+    }
+
     private async Task SavePreferencesAsync()
     {
         try
@@ -617,6 +734,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         RaiseStatusProperties();
         Raise(nameof(ChecklistSummary));
+        Raise(nameof(PlayGuideOverallSummary));
+        Raise(nameof(PlayGuideOverallPercentage));
+        Raise(nameof(PlayGuideFilterSummary));
+        Raise(nameof(PlayGuideEmptyMessage));
         Raise(nameof(CoverageSummary));
         Raise(nameof(ChecklistCompletionSummary));
         Raise(nameof(IncompleteBadge));

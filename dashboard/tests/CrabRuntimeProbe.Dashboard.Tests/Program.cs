@@ -10,6 +10,7 @@ var tests = new (string Name, Func<Task> Body)[]
     ("atomic ring partial-read fallback and parser update", RingFallbackAsync),
     ("stale heartbeat plus crash and dirty state", StaleCrashDirtyAsync),
     ("data-driven checklist prerequisites and qualifying evidence", ChecklistAsync),
+    ("friend-facing Play Guide projection, mapping, states, and filters", PlayGuideAsync),
     ("real exhaustive coverage catalog aliases and terminal states", CoverageCatalogAsync),
     ("atomic file replacement", AtomicFileAsync),
     ("safe prepare, mods merge, status archive, and resume", PrepareAndResumeAsync),
@@ -112,6 +113,102 @@ static async Task ChecklistAsync()
         "first/latest checklist timestamps were not parsed");
     Require(timestampItem.EvidenceSessions.Contains("demo-session", StringComparison.Ordinal),
         "evidenceSessionReferences alias not surfaced");
+}
+
+static async Task PlayGuideAsync()
+{
+    var repo = FindRepoRoot();
+    var resources = new DashboardResourceLocator().Locate(repo);
+    var definitions = await new ChecklistDefinitionLoader().LoadAuthoritativeOrFallbackAsync(resources);
+    var reducer = new PlayGuideReducer();
+    Require(definitions.Count == 109, "authoritative checklist count changed without a reviewed Play Guide mapping update");
+    Require(reducer.CanonicalChecklistIds.Count == 109, "Play Guide map must contain every canonical checklist ID");
+    Require(definitions.Select(item => item.Id).ToHashSet(StringComparer.OrdinalIgnoreCase)
+            .SetEquals(reducer.CanonicalChecklistIds),
+        "Play Guide map omitted or invented canonical checklist IDs");
+    Require(reducer.ActionCount == 25 && reducer.CategoryCount == 9,
+        "Play Guide must remain a 25-action, nine-category friend-facing projection");
+
+    var unobserved = definitions.Select(definition => ChecklistItem(definition, ChecklistDisplayState.NotObserved)).ToArray();
+    var hostGuide = reducer.Reduce(unobserved, CampaignRole.Host);
+    Require(hostGuide.Count == 9 && hostGuide.Sum(category => category.Actions.Count) == 25,
+        "Play Guide category/action projection changed");
+    var powerUps = hostGuide.SelectMany(category => category.Actions).Single(action => action.Id == "power-ups");
+    Require(powerUps.Subtasks.Select(item => item.Label).SequenceEqual(new[]
+    {
+        "Weapon mod", "Ability mod", "Melee mod", "Perk", "Relic"
+    }), "power-up action does not expose the five required friend-facing chips");
+    Require(powerUps.State == PlayGuideDisplayState.ToDo, "unobserved player action should be TO DO");
+    Require(hostGuide.SelectMany(category => category.Actions).Single(action => action.Id == "safety").State
+            == PlayGuideDisplayState.Waiting,
+        "unobserved automatic action should be WAITING");
+    var sameLobbyHost = hostGuide.SelectMany(category => category.Actions).Single(action => action.Id == "same-lobby");
+    Require(!sameLobbyHost.LinkedChecklistIds.Contains("session-joined-client-detected", StringComparer.OrdinalIgnoreCase)
+            && sameLobbyHost.LinkedChecklistIds.Contains("session-host-detected", StringComparer.OrdinalIgnoreCase),
+        "host Play Guide was blocked by the opposite computer's role-only signal");
+    var joinedGuide = reducer.Reduce(unobserved, CampaignRole.JoinedClient);
+    var sameLobbyJoined = joinedGuide.SelectMany(category => category.Actions).Single(action => action.Id == "same-lobby");
+    Require(!sameLobbyJoined.LinkedChecklistIds.Contains("session-host-detected", StringComparer.OrdinalIgnoreCase)
+            && sameLobbyJoined.LinkedChecklistIds.Contains("session-joined-client-detected", StringComparer.OrdinalIgnoreCase),
+        "joined-client Play Guide was blocked by the opposite computer's role-only signal");
+
+    var confirmed = definitions.Select(definition => ChecklistItem(definition, ChecklistDisplayState.Confirmed)).ToArray();
+    var completedGuide = reducer.Reduce(confirmed, CampaignRole.Host);
+    Require(completedGuide.SelectMany(category => category.Actions).All(action => action.State == PlayGuideDisplayState.Done),
+        "all clean terminal signals did not complete every action");
+    var oneMissing = confirmed.Select(item => item.Id == "inventory-relic-pickup"
+        ? item with { State = ChecklistDisplayState.NotObserved }
+        : item).ToArray();
+    Require(reducer.Reduce(oneMissing, CampaignRole.Host).SelectMany(category => category.Actions)
+            .Single(action => action.Id == "power-ups").State == PlayGuideDisplayState.InProgress,
+        "one missing signal among completed signals must remain IN PROGRESS");
+    var retry = confirmed.Select(item => item.Id == "transaction-anvil"
+        ? item with { State = ChecklistDisplayState.DirtyEvidence }
+        : item).ToArray();
+    Require(reducer.Reduce(retry, CampaignRole.Host).SelectMany(category => category.Actions)
+            .Single(action => action.Id == "anvil-use").State == PlayGuideDisplayState.Retry,
+        "dirty evidence did not override otherwise completed action signals");
+    var blocked = unobserved.Select(item => item.Id is "inventory-enhancements-shape" or "inventory-enhancements-values"
+        ? item with { State = ChecklistDisplayState.BlockedByPrerequisite }
+        : item).ToArray();
+    Require(reducer.Reduce(blocked, CampaignRole.Host).SelectMany(category => category.Actions)
+            .Single(action => action.Id == "anvil-use").State == PlayGuideDisplayState.Waiting,
+        "blocked action did not show WAITING");
+    var resolvedAlternatives = confirmed.Select(item => item.Id switch
+    {
+        "health-shield" => item with { State = ChecklistDisplayState.Unsupported },
+        "health-revival" => item with { State = ChecklistDisplayState.NotApplicable },
+        _ => item
+    }).ToArray();
+    Require(reducer.Reduce(resolvedAlternatives, CampaignRole.Host).SelectMany(category => category.Actions)
+            .Where(action => action.Id is "defenses" or "death-respawn")
+            .All(action => action.State == PlayGuideDisplayState.Done),
+        "clean unsupported/not-applicable signals were not terminal in Play Guide");
+
+    var future = ChecklistItem(
+        new ChecklistDefinition("future-onrep-playerstate", "Discovered", "OnRep_PlayerState RPC",
+            "Inspect a canonical terminal disposition.", true, Array.Empty<string>()),
+        ChecklistDisplayState.NotObserved);
+    var futureGuide = reducer.Reduce(unobserved.Append(future).ToArray(), CampaignRole.Host);
+    var other = futureGuide.SelectMany(category => category.Actions).Single(action => action.Id == "other-automatic");
+    Require(other.Subtasks.Any(item => item.Label == "Additional automatic check 1"),
+        "future unmapped entry was not surfaced under Other tasks");
+    var friendFacing = futureGuide.SelectMany(category => category.Actions)
+        .SelectMany(action => new[] { action.Title, action.Instruction }
+            .Concat(action.Subtasks.Select(subtask => subtask.Label)))
+        .ToArray();
+    foreach (var forbidden in new[] { "PlayerState", "OnRep", " RPC", "canonical", "terminal disposition" })
+        Require(friendFacing.All(text => !text.Contains(forbidden, StringComparison.OrdinalIgnoreCase)),
+            $"technical term leaked into Play Guide: {forbidden}");
+
+    Require(PlayGuideReducer.MatchesFilter(powerUps, PlayGuideFilter.ToDo)
+            && PlayGuideReducer.MatchesFilter(powerUps, PlayGuideFilter.All)
+            && !PlayGuideReducer.MatchesFilter(powerUps, PlayGuideFilter.Completed),
+        "TO DO filter semantics changed");
+    var donePowerUps = completedGuide.SelectMany(category => category.Actions).Single(action => action.Id == "power-ups");
+    Require(!PlayGuideReducer.MatchesFilter(donePowerUps, PlayGuideFilter.ToDo)
+            && PlayGuideReducer.MatchesFilter(donePowerUps, PlayGuideFilter.Completed),
+        "Completed filter semantics changed");
 }
 
 static async Task CoverageCatalogAsync()
@@ -472,6 +569,17 @@ static JsonSerializerOptions JsonOptions() => new()
     PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     WriteIndented = true
 };
+
+static ChecklistViewItem ChecklistItem(ChecklistDefinition definition, ChecklistDisplayState state) => new(
+    definition,
+    state,
+    state == ChecklistDisplayState.NotObserved ? 0 : 1,
+    null,
+    null,
+    string.Empty,
+    string.Empty,
+    definition.Instruction,
+    string.Empty);
 
 static string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))).ToLowerInvariant();
 

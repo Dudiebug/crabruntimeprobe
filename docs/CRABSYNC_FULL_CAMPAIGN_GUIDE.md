@@ -67,19 +67,44 @@ ladder. A stage advances only after its prerequisite is clean. An unsupported
 or failed category trips only that category's circuit breaker; unrelated
 passive observations continue.
 
+## Play Guide (default)
+
+The dashboard opens in **Play Guide** mode. It groups the authoritative
+technical checklist into a small set of player-facing actions across setup,
+pickups, equipment, shops, crystals, health, travel, reconnecting, and
+automatic observations. Each card updates from evidence; players never check a
+box manually.
+
+Friendly states are **TO DO**, **IN PROGRESS**, **DONE**, **WAITING**, and
+**RETRY**. A grouped action becomes DONE only when every required linked signal
+has a clean terminal result. Dirty or crash-suspect evidence produces RETRY,
+and hook registration alone can produce at most IN PROGRESS. Newly discovered
+or unmapped checklist entries remain visible under **Watching automatically**.
+
+Use the **To do**, **All**, and **Completed** filters to change which cards are
+shown. Category counts, percentages, and readiness denominators never change
+with the filter. **Advanced** retains the technical Overview, full checklist,
+coverage catalog, and reports.
+
+Play Guide is a projection only. Even if every friendly action is done, the
+nine final readiness areas remain independently derived from the exhaustive
+coverage catalog and stay incomplete while material rows remain unresolved.
+
 ## Dashboard controls
 
-- **Detect Installation** searches Steam libraries without retaining Steam
+- **Find automatically** / **Detect Installation** searches Steam libraries without retaining Steam
   account data.
 - **Select Installation** confirms a nonstandard game location.
-- **Prepare Campaign** installs the payload and writes a safe campaign
+- **Start play guide** prepares the campaign and starts monitoring with the
+  selected host/joining role.
+- **Prepare Campaign** in Advanced installs the payload and writes a safe campaign
   generation.
 - **Start Monitoring** watches completed atomic status snapshots and canonical
   append-only evidence.
 - **Open Crab Champions** launches Steam app `774801`.
 - **Stop Campaign Safely** writes a diagnostics-only stop request. It does not
   kill the game or change gameplay.
-- **Finish & Collect** finalizes status, collects RuntimeProbe/UE4SS/crash
+- **Finish and save results** / **Finish & Collect** finalizes status, collects RuntimeProbe/UE4SS/crash
   diagnostics, evaluates the checklist and catalog, and builds one ZIP for the
   local computer.
 - **Export Evidence Bundle** copies the completed ZIP to a chosen folder.

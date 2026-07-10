@@ -3,16 +3,18 @@ using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using System.Runtime.InteropServices;
+using System.Windows.Interop;
 using Application = System.Windows.Application;
 
 namespace CrabRuntimeProbe.Dashboard;
 
 public enum DashboardScreenshotView
 {
-    Simple,
-    Overview,
-    Checklist,
-    Coverage
+    PlayGuide,
+    AdvancedOverview,
+    AdvancedChecklist,
+    AdvancedCoverage
 }
 
 public partial class MainWindow : Window
@@ -47,6 +49,12 @@ public partial class MainWindow : Window
 
     private void Window_Closed(object? sender, EventArgs e) => _viewModel.Dispose();
 
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        ApplyDarkWindowChrome();
+    }
+
     private async Task CaptureReviewScreenshotsAsync(string overviewPath)
     {
         var extension = Path.GetExtension(overviewPath);
@@ -56,36 +64,76 @@ public partial class MainWindow : Window
             ? new[] { (View: requestedView, Path: overviewPath) }
             : new[]
             {
-                (View: DashboardScreenshotView.Simple, Path: overviewPath),
-                (View: DashboardScreenshotView.Overview, Path: stem + ".overview" + extension),
-                (View: DashboardScreenshotView.Checklist, Path: stem + ".checklist" + extension),
-                (View: DashboardScreenshotView.Coverage, Path: stem + ".needs-coverage" + extension)
+                (View: DashboardScreenshotView.PlayGuide, Path: overviewPath),
+                (View: DashboardScreenshotView.AdvancedOverview, Path: stem + ".advanced-overview" + extension),
+                (View: DashboardScreenshotView.AdvancedChecklist, Path: stem + ".advanced-checklist" + extension),
+                (View: DashboardScreenshotView.AdvancedCoverage, Path: stem + ".advanced-needs-coverage" + extension)
             };
         foreach (var target in targets)
         {
             SelectScreenshotView(target.View);
-            UpdateLayout();
-            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
-            // The grouped checklist has a deferred virtualization pass after its first layout.
-            // Wait for that pass so automated visual review captures the real rendered tab.
-            await Task.Delay(1000);
-            UpdateLayout();
-            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            await CompleteScreenshotLayoutAsync();
             SaveWindowPng(target.Path);
         }
     }
 
     private void SelectScreenshotView(DashboardScreenshotView view)
     {
+        if (view == DashboardScreenshotView.PlayGuide)
+        {
+            ModeTabs.SelectedIndex = 0;
+            PlayGuideScroll.ScrollToTop();
+            return;
+        }
+
+        ModeTabs.SelectedIndex = 1;
         RootTabs.SelectedIndex = view switch
         {
-            DashboardScreenshotView.Simple => 0,
-            DashboardScreenshotView.Overview => 0,
-            DashboardScreenshotView.Checklist => 1,
-            DashboardScreenshotView.Coverage => 2,
+            DashboardScreenshotView.AdvancedOverview => 0,
+            DashboardScreenshotView.AdvancedChecklist => 1,
+            DashboardScreenshotView.AdvancedCoverage => 2,
             _ => throw new ArgumentOutOfRangeException(nameof(view), view, null)
         };
+        if (view == DashboardScreenshotView.AdvancedChecklist && AdvancedChecklistList.Items.Count > 0)
+            AdvancedChecklistList.ScrollIntoView(AdvancedChecklistList.Items[0]);
     }
+
+    private async Task CompleteScreenshotLayoutAsync()
+    {
+        // Nested tabs and grouped item controls each schedule a deferred layout/render pass.
+        // Waiting for multiple completed passes avoids stale, blank, or partially generated captures.
+        for (var pass = 0; pass < 3; pass++)
+        {
+            UpdateLayout();
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            await Task.Delay(120);
+        }
+    }
+
+    private void ApplyDarkWindowChrome()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        try
+        {
+            var handle = new WindowInteropHelper(this).Handle;
+            var enabled = 1;
+            _ = DwmSetWindowAttribute(handle, 20, ref enabled, sizeof(int));
+
+            // COLORREF values are 0x00BBGGRR.
+            var border = 0x004B3426;
+            var caption = 0x00160D09;
+            var captionText = 0x00FCFAF8;
+            _ = DwmSetWindowAttribute(handle, 34, ref border, sizeof(int));
+            _ = DwmSetWindowAttribute(handle, 35, ref caption, sizeof(int));
+            _ = DwmSetWindowAttribute(handle, 36, ref captionText, sizeof(int));
+        }
+        catch (DllNotFoundException) { }
+        catch (EntryPointNotFoundException) { }
+    }
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int valueSize);
 
     private void SaveWindowPng(string path)
     {

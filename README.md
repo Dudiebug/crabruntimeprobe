@@ -78,14 +78,21 @@ diagnostic tick driver for this UE4SS/Crab Champions setup is `executeDelay`.
 ## Minimal user workflow
 
 1. Open the dashboard on both computers.
-2. Select **Host** on one and **Joined Client** on the other.
-3. Confirm the game installation, then click **Prepare Campaign** and **Start
-   Monitoring** on both.
-4. Open Crab Champions, create/join the same lobby, and play one deliberate run
-   while following the dashboard's next-action checklist.
-5. Close both games normally and click **Finish & Collect**.
-6. Export the two evidence ZIPs and use **Combine Bundles** for the offline
+2. Leave the dashboard in its default **Play Guide** mode.
+3. Choose **I’m hosting** on one computer and **I’m joining a friend** on the
+   other, then confirm the game folder or use **Find automatically**.
+4. Click **Start play guide** on both computers.
+5. Create/join the same lobby and play one deliberate run while following the
+   large player-facing cards. They update automatically from qualifying clean
+   evidence; there are no manual completion boxes.
+6. Close both games normally and click **Finish and save results**.
+7. Export the two evidence ZIPs and use **Combine Bundles** for the offline
    host/client readiness report.
+
+The **Advanced** mode retains the technical Overview, exhaustive checklist,
+coverage catalog, and reports. Play Guide is only a presentation over the
+authoritative checklist; it does not change evidence rules or imply that
+CrabSync is ready.
 
 See the [full campaign guide](docs/CRABSYNC_FULL_CAMPAIGN_GUIDE.md) for the exact
 multiplayer actions, status meanings, crash recovery, coverage rules, and safety

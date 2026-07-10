@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="CrabRuntimeProbe - CrabSync Evidence Dashboard"
-        Width="1440" Height="900" MinWidth="1080" MinHeight="700"
+        Width="1440" Height="900" MinWidth="900" MinHeight="620"
         Background="{StaticResource PageBrush}" Foreground="{StaticResource TextBrush}" FontFamily="Segoe UI"
         WindowStartupLocation="CenterScreen" Loaded="Window_Loaded" Closed="Window_Closed">
     <Window.Resources>
@@ -10,8 +10,8 @@
             <Setter Property="Background" Value="{StaticResource PanelBrush}"/>
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="CornerRadius" Value="10"/>
-            <Setter Property="Padding" Value="16"/>
+            <Setter Property="CornerRadius" Value="12"/>
+            <Setter Property="Padding" Value="18"/>
             <Setter Property="Margin" Value="0,0,12,12"/>
         </Style>
         <Style x:Key="SmallLabel" TargetType="TextBlock">
@@ -28,7 +28,239 @@
         </Style>
     </Window.Resources>
 
-    <Grid Margin="22" Background="{StaticResource PageBrush}" TextElement.Foreground="{StaticResource TextBrush}">
+    <Grid Background="{StaticResource PageBrush}" TextElement.Foreground="{StaticResource TextBrush}">
+        <TabControl x:Name="ModeTabs" SelectedIndex="0" Background="{StaticResource PageBrush}"
+                    BorderThickness="0" Padding="0" ItemContainerStyle="{StaticResource ModeTabItem}">
+            <TabItem Header="Play Guide" AutomationProperties.Name="Play Guide mode">
+                <Grid Background="{StaticResource PageBrush}">
+                    <ScrollViewer x:Name="PlayGuideScroll" VerticalScrollBarVisibility="Auto"
+                                  HorizontalScrollBarVisibility="Disabled" Background="{StaticResource PageBrush}"
+                                  AutomationProperties.Name="CrabSync Play Guide content">
+                        <Grid Margin="20" MaxWidth="1120" HorizontalAlignment="Center">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <Grid Grid.Row="0" Margin="0,4,0,18">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock FontSize="26" FontWeight="SemiBold" Text="CrabSync Play Guide"/>
+                                    <TextBlock FontSize="16" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0"
+                                               Text="Play normally—we’ll check things off as they happen."/>
+                                </StackPanel>
+                                <Border Grid.Column="1" Background="{StaticResource AccentDarkBrush}" CornerRadius="16"
+                                        Padding="13,7" VerticalAlignment="Center" Margin="16,0,0,0">
+                                    <TextBlock Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"
+                                               Text="Read-only • doesn’t change your game"/>
+                                </Border>
+                            </Grid>
+
+                            <Border Grid.Row="1" Style="{StaticResource Card}" Margin="0,0,0,16"
+                                    AutomationProperties.Name="Play Guide setup">
+                                <StackPanel>
+                                    <TextBlock FontSize="20" FontWeight="SemiBold" Text="Set up this computer"/>
+                                    <WrapPanel Margin="0,15,0,0">
+                                        <StackPanel Width="610" MaxWidth="610" Margin="0,0,20,12">
+                                            <TextBlock Style="{StaticResource SmallLabel}" FontSize="12" Text="GAME FOLDER"/>
+                                            <DockPanel Margin="0,7,0,0">
+                                                <Button DockPanel.Dock="Right" Command="{Binding DetectGameCommand}"
+                                                        Content="Find automatically" Margin="8,0,0,0"
+                                                        AutomationProperties.Name="Find Crab Champions automatically"
+                                                        AutomationProperties.HelpText="Searches Steam libraries for the Crab Champions game folder."/>
+                                                <TextBox Text="{Binding GameDirectory, UpdateSourceTrigger=PropertyChanged}"
+                                                         MinWidth="360" AutomationProperties.Name="Crab Champions game folder"
+                                                         AutomationProperties.HelpText="The folder containing the Crab Champions game files."/>
+                                            </DockPanel>
+                                        </StackPanel>
+                                        <StackPanel MinWidth="330" Margin="0,0,0,12">
+                                            <TextBlock Style="{StaticResource SmallLabel}" FontSize="12" Text="MY ROLE"/>
+                                            <WrapPanel Margin="0,7,0,0">
+                                                <ToggleButton Style="{StaticResource ChoiceToggleButton}"
+                                                              IsChecked="{Binding IsHosting, Mode=TwoWay}"
+                                                              Content="I’m hosting."
+                                                              AutomationProperties.Name="I am hosting"/>
+                                                <ToggleButton Style="{StaticResource ChoiceToggleButton}"
+                                                              IsChecked="{Binding IsJoiningFriend, Mode=TwoWay}"
+                                                              Content="I’m joining a friend."
+                                                              AutomationProperties.Name="I am joining a friend"/>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </WrapPanel>
+                                    <WrapPanel Margin="0,4,0,0">
+                                        <Button Style="{StaticResource PrimaryButton}" Command="{Binding PrepareAndStartCommand}"
+                                                Content="Start play guide" MinWidth="210"
+                                                AutomationProperties.Name="Start play guide"
+                                                AutomationProperties.HelpText="Prepares the read-only campaign and opens Crab Champions."/>
+                                        <Button Style="{StaticResource SecondaryButton}" Command="{Binding ExportCommand}"
+                                                Content="Finish and save results" MinWidth="210"
+                                                AutomationProperties.Name="Finish and save results"
+                                                AutomationProperties.HelpText="Stops observation safely and saves this computer’s evidence bundle."/>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Grid.Row="2" Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/>
+                                        <ColumnDefinition Width="240"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource SmallLabel}" FontSize="12" Text="THIS PLAY SESSION"/>
+                                        <TextBlock FontSize="18" FontWeight="SemiBold" Margin="0,5,0,0"
+                                                   Text="{Binding PlayGuideOverallSummary}"/>
+                                        <TextBlock FontSize="14" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0"
+                                                   Text="{Binding Activity}" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ProgressBar Grid.Column="1" Height="12" Margin="20,0" VerticalAlignment="Center"
+                                                 Minimum="0" Maximum="100" Value="{Binding PlayGuideOverallPercentage}"
+                                                 AutomationProperties.Name="Overall Play Guide progress"/>
+                                    <TextBlock Grid.Column="2" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"
+                                               Foreground="{StaticResource AccentBrush}"
+                                               Text="{Binding PlayGuideOverallPercentage, StringFormat={}{0:0}%}"/>
+                                </Grid>
+                            </Border>
+
+                            <Grid Grid.Row="3" Margin="0,0,0,12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" FontSize="14"
+                                           Text="{Binding PlayGuideFilterSummary}"/>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                    <ToggleButton Style="{StaticResource FilterToggleButton}" Content="To do"
+                                                  IsChecked="{Binding IsPlayGuideToDoFilter, Mode=TwoWay}"
+                                                  AutomationProperties.Name="Show actions to do"/>
+                                    <ToggleButton Style="{StaticResource FilterToggleButton}" Content="All"
+                                                  IsChecked="{Binding IsPlayGuideAllFilter, Mode=TwoWay}"
+                                                  AutomationProperties.Name="Show all actions"/>
+                                    <ToggleButton Style="{StaticResource FilterToggleButton}" Content="Completed"
+                                                  IsChecked="{Binding IsPlayGuideCompletedFilter, Mode=TwoWay}"
+                                                  AutomationProperties.Name="Show completed actions"/>
+                                </StackPanel>
+                            </Grid>
+
+                            <ItemsControl Grid.Row="4" ItemsSource="{Binding PlayGuideCategories}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Style="{StaticResource Card}" Padding="0" Margin="0,0,0,16">
+                                            <Expander Style="{StaticResource PlayGuideExpander}" IsExpanded="True"
+                                                      AutomationProperties.Name="{Binding AutomationName}">
+                                                <Expander.Header>
+                                                    <Grid Margin="18,15">
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition/>
+                                                            <ColumnDefinition Width="230"/>
+                                                            <ColumnDefinition Width="75"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <StackPanel>
+                                                            <TextBlock FontSize="20" FontWeight="SemiBold" Text="{Binding Name}"/>
+                                                            <TextBlock FontSize="13" Foreground="{StaticResource MutedBrush}"
+                                                                       Margin="0,4,0,0" Text="{Binding CompletionText}"/>
+                                                        </StackPanel>
+                                                        <ProgressBar Grid.Column="1" Height="10" Margin="18,0"
+                                                                     VerticalAlignment="Center" Minimum="0" Maximum="100"
+                                                                     Value="{Binding Percentage}"/>
+                                                        <TextBlock Grid.Column="2" FontSize="16" FontWeight="SemiBold"
+                                                                   VerticalAlignment="Center" HorizontalAlignment="Right"
+                                                                   Foreground="{StaticResource AccentBrush}" Text="{Binding PercentageText}"/>
+                                                    </Grid>
+                                                </Expander.Header>
+                                                <StackPanel Margin="18,0,18,18">
+                                                    <Border Background="{StaticResource AccentDarkBrush}" CornerRadius="8"
+                                                            Padding="12,8" Margin="0,0,0,12">
+                                                        <TextBlock FontSize="14" Foreground="{StaticResource TextBrush}"
+                                                                   Text="{Binding NextRecommendedAction}" TextWrapping="Wrap"/>
+                                                    </Border>
+                                                    <ItemsControl ItemsSource="{Binding Actions}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <Border Background="{StaticResource PanelRaisedBrush}"
+                                                                        BorderBrush="{StaticResource BorderBrush}"
+                                                                        BorderThickness="1" CornerRadius="12" Margin="0,0,0,10">
+                                                                    <Expander Style="{StaticResource TaskExpander}" IsExpanded="True"
+                                                                              AutomationProperties.Name="{Binding AutomationName}">
+                                                                        <Expander.Header>
+                                                                            <Grid Margin="16,14">
+                                                                                <Grid.ColumnDefinitions>
+                                                                                    <ColumnDefinition Width="Auto"/>
+                                                                                    <ColumnDefinition/>
+                                                                                </Grid.ColumnDefinitions>
+                                                                                <Border Background="{StaticResource PageBrush}"
+                                                                                        BorderBrush="{Binding State, Converter={StaticResource StatusBrushConverter}}"
+                                                                                        BorderThickness="1" CornerRadius="10"
+                                                                                        Padding="9,5" Margin="0,0,14,0">
+                                                                                    <StackPanel Orientation="Horizontal">
+                                                                                        <TextBlock FontSize="15" FontWeight="Bold"
+                                                                                                   Foreground="{Binding State, Converter={StaticResource StatusBrushConverter}}"
+                                                                                                   Text="{Binding StateIcon}" Margin="0,0,6,0"/>
+                                                                                        <TextBlock FontSize="12" FontWeight="Bold"
+                                                                                                   Foreground="{Binding State, Converter={StaticResource StatusBrushConverter}}"
+                                                                                                   Text="{Binding StateText}"/>
+                                                                                    </StackPanel>
+                                                                                </Border>
+                                                                                <TextBlock Grid.Column="1" FontSize="18" FontWeight="SemiBold"
+                                                                                           VerticalAlignment="Center" Text="{Binding Title}"
+                                                                                           TextWrapping="Wrap"/>
+                                                                            </Grid>
+                                                                        </Expander.Header>
+                                                                        <StackPanel Margin="16,0,16,16">
+                                                                            <TextBlock FontSize="14" LineHeight="21"
+                                                                                       Foreground="{StaticResource MutedBrush}"
+                                                                                       Text="{Binding Instruction}" TextWrapping="Wrap"/>
+                                                                            <ItemsControl ItemsSource="{Binding Subtasks}" Margin="0,10,0,0">
+                                                                                <ItemsControl.ItemsPanel>
+                                                                                    <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                                                                </ItemsControl.ItemsPanel>
+                                                                                <ItemsControl.ItemTemplate>
+                                                                                    <DataTemplate>
+                                                                                        <Border Background="{StaticResource PageBrush}"
+                                                                                                BorderBrush="{Binding State, Converter={StaticResource StatusBrushConverter}}"
+                                                                                                BorderThickness="1" CornerRadius="10"
+                                                                                                Padding="9,6" Margin="0,0,8,8"
+                                                                                                AutomationProperties.Name="{Binding AutomationName}">
+                                                                                            <StackPanel Orientation="Horizontal">
+                                                                                                <TextBlock Foreground="{Binding State, Converter={StaticResource StatusBrushConverter}}"
+                                                                                                           Text="{Binding StateIcon}" Margin="0,0,6,0"/>
+                                                                                                <TextBlock FontSize="13" Text="{Binding Label}"/>
+                                                                                            </StackPanel>
+                                                                                        </Border>
+                                                                                    </DataTemplate>
+                                                                                </ItemsControl.ItemTemplate>
+                                                                            </ItemsControl>
+                                                                        </StackPanel>
+                                                                    </Expander>
+                                                                </Border>
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </StackPanel>
+                                            </Expander>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+
+                            <TextBlock Grid.Row="5" Margin="4,0,4,24" FontSize="15"
+                                       Foreground="{StaticResource MutedBrush}" Text="{Binding PlayGuideEmptyMessage}"
+                                       TextWrapping="Wrap" HorizontalAlignment="Center"/>
+                        </Grid>
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="Advanced" AutomationProperties.Name="Advanced dashboard mode">
+                <Grid Margin="22" Background="{StaticResource PageBrush}" TextElement.Foreground="{StaticResource TextBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -193,8 +425,10 @@
             </TabItem>
 
             <TabItem Header="Action checklist">
-                <ListView ItemsSource="{Binding ChecklistView}" Background="{StaticResource PanelBrush}" BorderThickness="0"
-                          ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True">
+                <ListView x:Name="AdvancedChecklistList" ItemsSource="{Binding ChecklistView}"
+                          Background="{StaticResource PanelBrush}" BorderThickness="0"
+                          ScrollViewer.CanContentScroll="False" VirtualizingPanel.IsVirtualizing="False"
+                          AutomationProperties.Name="Advanced technical checklist">
                     <ListView.GroupStyle>
                         <GroupStyle>
                             <GroupStyle.HeaderTemplate>
@@ -316,5 +550,8 @@
             <TextBlock VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" Text="{Binding Activity}"/>
             <Button Grid.Column="1" Command="{Binding ResetCommand}" Content="Reset Dashboard State" Padding="11,6" Margin="8,0,0,0"/>
         </Grid>
+                </Grid>
+            </TabItem>
+        </TabControl>
     </Grid>
 </Window>
