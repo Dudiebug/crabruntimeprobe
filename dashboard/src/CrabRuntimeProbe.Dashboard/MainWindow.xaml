@@ -233,6 +233,9 @@
                                                                                                 <TextBlock Foreground="{Binding State, Converter={StaticResource StatusBrushConverter}}"
                                                                                                            Text="{Binding StateIcon}" Margin="0,0,6,0"/>
                                                                                                 <TextBlock FontSize="13" Text="{Binding Label}"/>
+                                                                                                <TextBlock FontSize="11" FontWeight="Bold" Margin="8,1,0,0"
+                                                                                                           Foreground="{Binding State, Converter={StaticResource StatusBrushConverter}}"
+                                                                                                           Text="{Binding StateText}"/>
                                                                                             </StackPanel>
                                                                                         </Border>
                                                                                     </DataTemplate>

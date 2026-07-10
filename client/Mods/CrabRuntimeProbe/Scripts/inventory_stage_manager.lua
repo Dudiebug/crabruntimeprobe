@@ -20,11 +20,11 @@ local STAGES = {
 }
 
 local CATEGORY_DEFINITIONS = {
-  WeaponMods = { daField = 'WeaponModDA', slotField = 'NumWeaponModSlots', checklistPrefix = 'inventory.weapon-mod' },
-  AbilityMods = { daField = 'AbilityModDA', slotField = 'NumAbilityModSlots', checklistPrefix = 'inventory.ability-mod' },
-  MeleeMods = { daField = 'MeleeModDA', slotField = 'NumMeleeModSlots', checklistPrefix = 'inventory.melee-mod' },
-  Perks = { daField = 'PerkDA', slotField = 'NumPerkSlots', checklistPrefix = 'inventory.perk' },
-  Relics = { daField = 'RelicDA', slotField = '', checklistPrefix = 'inventory.relic' }
+  WeaponMods = { daField = 'WeaponModDA', slotField = 'NumWeaponModSlots', checklistPrefix = 'inventory-weapon-mod' },
+  AbilityMods = { daField = 'AbilityModDA', slotField = 'NumAbilityModSlots', checklistPrefix = 'inventory-ability-mod' },
+  MeleeMods = { daField = 'MeleeModDA', slotField = 'NumMeleeModSlots', checklistPrefix = 'inventory-melee-mod' },
+  Perks = { daField = 'PerkDA', slotField = 'NumPerkSlots', checklistPrefix = 'inventory-perk' },
+  Relics = { daField = 'RelicDA', slotField = '', checklistPrefix = 'inventory-relic' }
 }
 
 local CATEGORY_ORDER = { 'WeaponMods', 'AbilityMods', 'MeleeMods', 'Perks', 'Relics' }
@@ -129,20 +129,22 @@ end
 local function stageChecklistLinks(category, stage)
   local prefix = CATEGORY_DEFINITIONS[category].checklistPrefix
   local map = {
-    [1] = { 'inventory.wrapper-shape' },
-    [2] = { 'inventory.array-counts' },
-    [3] = { 'inventory.first-element' },
-    [4] = { prefix .. '-pickup', 'inventory.item-da-identity' },
-    [5] = { 'inventory.inventoryinfo-parent' },
-    [6] = { 'inventory.level', 'inventory.accumulated-buff' },
-    [7] = { 'inventory.enhancements-shape' },
-    [8] = { 'inventory.enhancements-count' },
-    [9] = { 'inventory.enhancements-values' },
-    [10] = { 'inventory.capped-full-iteration' },
-    [11] = { 'inventory.duplicate-semantics' },
-    [12] = { 'inventory.slot-index-stability' },
-    [13] = { 'inventory.joined-client-reads' },
-    [14] = { 'inventory.remote-visibility' }
+    -- Wrapper shape, raw first-element shape, and enhancement count are internal
+    -- prerequisites. They remain in stage evidence but do not invent checklist IDs.
+    [1] = {},
+    [2] = { 'inventory-array-counts' },
+    [3] = {},
+    [4] = { prefix .. '-pickup', 'inventory-first-da-identity' },
+    [5] = { 'inventory-info-parent' },
+    [6] = { 'inventory-level', 'inventory-accumulated-buff' },
+    [7] = { 'inventory-enhancements-shape' },
+    [8] = {},
+    [9] = { 'inventory-enhancements-values' },
+    [10] = { 'inventory-capped-iteration' },
+    [11] = { 'inventory-duplicate-semantics' },
+    [12] = { 'inventory-order-index-stability' },
+    [13] = { 'inventory-joined-client-reads' },
+    [14] = { 'inventory-remote-visibility' }
   }
   return map[stage] or {}
 end

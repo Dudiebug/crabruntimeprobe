@@ -138,6 +138,26 @@ static async Task PlayGuideAsync()
     {
         "Weapon mod", "Ability mod", "Melee mod", "Perk", "Relic"
     }), "power-up action does not expose the five required friend-facing chips");
+    var inventoryStageSource = await File.ReadAllTextAsync(
+        Path.Combine(repo, "client", "Mods", "CrabRuntimeProbe", "Scripts", "inventory_stage_manager.lua"));
+    foreach (var canonicalRuntimeId in new[]
+             {
+                 "inventory-array-counts", "inventory-first-da-identity", "inventory-info-parent",
+                 "inventory-level", "inventory-accumulated-buff", "inventory-enhancements-shape",
+                 "inventory-enhancements-values", "inventory-capped-iteration", "inventory-duplicate-semantics",
+                 "inventory-order-index-stability", "inventory-joined-client-reads", "inventory-remote-visibility"
+             })
+        Require(inventoryStageSource.Contains($"'{canonicalRuntimeId}'", StringComparison.Ordinal)
+                && reducer.CanonicalChecklistIds.Contains(canonicalRuntimeId, StringComparer.OrdinalIgnoreCase),
+            $"runtime inventory stage is not linked to canonical Play Guide ID {canonicalRuntimeId}");
+    foreach (var obsoleteRuntimeId in new[]
+             {
+                 "inventory.wrapper-shape", "inventory.array-counts", "inventory.first-element",
+                 "inventory.item-da-identity", "inventory.inventoryinfo-parent", "inventory.enhancements-count",
+                 "inventory.capped-full-iteration", "inventory.slot-index-stability"
+             })
+        Require(!inventoryStageSource.Contains($"'{obsoleteRuntimeId}'", StringComparison.Ordinal),
+            $"legacy uncatalogued runtime checklist ID remains: {obsoleteRuntimeId}");
     Require(powerUps.State == PlayGuideDisplayState.ToDo, "unobserved player action should be TO DO");
     Require(hostGuide.SelectMany(category => category.Actions).Single(action => action.Id == "safety").State
             == PlayGuideDisplayState.Waiting,
@@ -168,6 +188,13 @@ static async Task PlayGuideAsync()
     Require(reducer.Reduce(retry, CampaignRole.Host).SelectMany(category => category.Actions)
             .Single(action => action.Id == "anvil-use").State == PlayGuideDisplayState.Retry,
         "dirty evidence did not override otherwise completed action signals");
+    var globallyDirty = reducer.Reduce(confirmed, CampaignRole.Host, EvidenceCleanliness.Dirty);
+    Require(globallyDirty.SelectMany(category => category.Actions)
+                .All(action => action.State == PlayGuideDisplayState.Retry
+                               && action.Subtasks.All(subtask => subtask.State == PlayGuideDisplayState.Retry))
+            && reducer.Reduce(confirmed, CampaignRole.Host, EvidenceCleanliness.CrashSuspect)
+                .SelectMany(category => category.Actions).All(action => action.State == PlayGuideDisplayState.Retry),
+        "global dirty/crash-suspect evidence allowed a Play Guide action or chip to remain DONE");
     var blocked = unobserved.Select(item => item.Id is "inventory-enhancements-shape" or "inventory-enhancements-values"
         ? item with { State = ChecklistDisplayState.BlockedByPrerequisite }
         : item).ToArray();

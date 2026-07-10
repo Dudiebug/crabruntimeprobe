@@ -85,3 +85,19 @@ jobs:
           name: dashboard-review-screenshots
           path: ${{ runner.temp }}/dashboard-screenshots/*.png
           if-no-files-found: error
+
+      # Temporary review transport for environments that can read Actions logs
+      # but cannot directly materialize artifact ZIPs. Removed after visual QA.
+      - name: Emit screenshot review payloads
+        shell: pwsh
+        run: |
+          Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP "dashboard-screenshots") -Filter "*.png" |
+            Sort-Object Name |
+            ForEach-Object {
+              Write-Host "SCREENSHOT_BEGIN:$($_.Name)"
+              $payload = [Convert]::ToBase64String([IO.File]::ReadAllBytes($_.FullName))
+              for ($offset = 0; $offset -lt $payload.Length; $offset += 30000) {
+                Write-Host $payload.Substring($offset, [Math]::Min(30000, $payload.Length - $offset))
+              }
+              Write-Host "SCREENSHOT_END:$($_.Name)"
+            }

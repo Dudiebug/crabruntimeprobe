@@ -678,7 +678,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void RefreshPlayGuide()
     {
-        _allPlayGuideCategories = _playGuideReducer.Reduce(Checklist.ToArray(), SelectedRole);
+        _allPlayGuideCategories = _playGuideReducer.Reduce(Checklist.ToArray(), SelectedRole, Status.Cleanliness);
         ApplyPlayGuideFilter();
     }
 

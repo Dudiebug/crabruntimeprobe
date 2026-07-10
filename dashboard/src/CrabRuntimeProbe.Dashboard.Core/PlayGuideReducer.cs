@@ -121,7 +121,8 @@ public sealed class PlayGuideReducer
 
     public IReadOnlyList<PlayGuideCategory> Reduce(
         IReadOnlyList<ChecklistViewItem> checklist,
-        CampaignRole selectedRole)
+        CampaignRole selectedRole,
+        EvidenceCleanliness cleanliness = EvidenceCleanliness.Clean)
     {
         var grouped = checklist
             .GroupBy(item => Canonicalize(item.Id), StringComparer.OrdinalIgnoreCase)
@@ -131,7 +132,7 @@ public sealed class PlayGuideReducer
         var projected = Actions
             .OrderBy(item => Categories.Single(category => category.Id == item.CategoryId).Order)
             .ThenBy(item => item.Order)
-            .Select(definition => ProjectAction(definition, grouped, selectedRole))
+            .Select(definition => ProjectAction(definition, grouped, selectedRole, cleanliness))
             .ToList();
 
         var unmapped = checklist
@@ -144,10 +145,16 @@ public sealed class PlayGuideReducer
             var index = projected.FindIndex(item => item.Id == "other-automatic");
             var current = projected[index];
             var extras = unmapped.Select((item, itemIndex) => new PlayGuideSubtask(
-                SafeUnmappedLabel(item, itemIndex + 1), ToDisplayState(SignalFor(new[] { item })))).ToArray();
-            var state = AggregateActionState(
-                current.LinkedChecklistIds.Select(id => SignalForId(id, grouped)).Concat(extras.Select(item => ToSignalState(item.State))),
-                automatic: true);
+                SafeUnmappedLabel(item, itemIndex + 1),
+                cleanliness is EvidenceCleanliness.Dirty or EvidenceCleanliness.CrashSuspect
+                    ? PlayGuideDisplayState.Retry
+                    : ToDisplayState(SignalFor(new[] { item })))).ToArray();
+            var state = cleanliness is EvidenceCleanliness.Dirty or EvidenceCleanliness.CrashSuspect
+                ? PlayGuideDisplayState.Retry
+                : AggregateActionState(
+                    current.LinkedChecklistIds.Select(id => SignalForId(id, grouped))
+                        .Concat(extras.Select(item => ToSignalState(item.State))),
+                    automatic: true);
             projected[index] = current with
             {
                 Instruction = $"{unmapped.Length} additional automatic check{(unmapped.Length == 1 ? " was" : "s were")} added. Keep playing normally; nothing is hidden.",
@@ -180,7 +187,8 @@ public sealed class PlayGuideReducer
     private static PlayGuideAction ProjectAction(
         ActionDefinition definition,
         IReadOnlyDictionary<string, IReadOnlyList<ChecklistViewItem>> grouped,
-        CampaignRole selectedRole)
+        CampaignRole selectedRole,
+        EvidenceCleanliness cleanliness)
     {
         var linkedIds = ChecklistToAction
             .Where(pair => pair.Value == definition.Id)
@@ -190,11 +198,15 @@ public sealed class PlayGuideReducer
         var requiredIds = RoleAdjusted(linkedIds, selectedRole).ToArray();
         var signals = requiredIds.Select(id => SignalForId(id, grouped)).ToArray();
         var mappingWarning = signals.Any(state => state == SignalState.Missing);
-        var state = AggregateActionState(signals, definition.Automatic);
+        var state = cleanliness is EvidenceCleanliness.Dirty or EvidenceCleanliness.CrashSuspect
+            ? PlayGuideDisplayState.Retry
+            : AggregateActionState(signals, definition.Automatic);
         var subtasks = (definition.Subtasks ?? Array.Empty<SubtaskDefinition>())
             .Select(subtask => new PlayGuideSubtask(
                 subtask.Label,
-                ToDisplayState(SignalForId(subtask.ChecklistId, grouped))))
+                cleanliness is EvidenceCleanliness.Dirty or EvidenceCleanliness.CrashSuspect
+                    ? PlayGuideDisplayState.Retry
+                    : ToDisplayState(SignalForId(subtask.ChecklistId, grouped))))
             .ToArray();
         var instruction = mappingWarning
             ? "A required campaign check is missing. Restart the dashboard, then open Advanced if RETRY remains."
