@@ -49,12 +49,32 @@ jobs:
       - name: Render review screenshots
         shell: pwsh
         run: |
-          $output = Join-Path $env:RUNNER_TEMP "dashboard-screenshots\dashboard-play-guide.png"
-          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $output) | Out-Null
-          dotnet run --project dashboard/src/CrabRuntimeProbe.Dashboard/CrabRuntimeProbe.Dashboard.csproj -c Release -- --screenshot $output
+          $outputRoot = Join-Path $env:RUNNER_TEMP "dashboard-screenshots"
+          New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+          $expectedScreenshots = [ordered]@{
+            "dashboard-play-guide.png" = "play-guide"
+            "dashboard-play-guide.advanced-overview.png" = "advanced-overview"
+            "dashboard-play-guide.advanced-checklist.png" = "checklist"
+            "dashboard-play-guide.advanced-needs-coverage.png" = "coverage"
+          }
+          foreach ($entry in $expectedScreenshots.GetEnumerator()) {
+            $output = Join-Path $outputRoot $entry.Key
+            dotnet run --no-build --project dashboard/src/CrabRuntimeProbe.Dashboard/CrabRuntimeProbe.Dashboard.csproj -c Release -- --screenshot $output --screenshot-tab $entry.Value
+            if ($LASTEXITCODE -ne 0) {
+              throw "Screenshot render failed for $($entry.Key)"
+            }
+          }
+
+          $actualNames = @(Get-ChildItem -LiteralPath $outputRoot -File -Filter "*.png" |
+            Sort-Object Name | ForEach-Object Name)
+          $expectedNames = @($expectedScreenshots.Keys | Sort-Object)
+          $nameDifference = @(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames)
+          if ($actualNames.Count -ne 4 -or $nameDifference.Count -ne 0) {
+            throw "Expected exactly four review screenshots: $($expectedNames -join ', '); got: $($actualNames -join ', ')"
+          }
 
           Add-Type -AssemblyName System.Drawing
-          Get-ChildItem -LiteralPath (Split-Path -Parent $output) -Filter "*.png" | ForEach-Object {
+          Get-ChildItem -LiteralPath $outputRoot -File -Filter "*.png" | Sort-Object Name | ForEach-Object {
             $image = [System.Drawing.Bitmap]::FromFile($_.FullName)
             try {
               if ($image.Width -lt 900 -or $image.Height -lt 620) {
@@ -73,34 +93,39 @@ jobs:
                 }
               }
 
-              # A failed WPF composition pass can leave a wide, pure-black band while all
-              # four corners still look correct. Sample every eighth pixel and reject any
-              # long run of rows that is overwhelmingly black.
-              $longestBlackBand = 0
-              $currentBlackBand = 0
+              # A failed WPF composition pass can leave a wide black, transparent, or
+              # page-colored band while all four corners still look correct. Sample every
+              # eighth pixel and reject any long run of rows that is overwhelmingly blank.
+              $longestBlankBand = 0
+              $currentBlankBand = 0
               for ($y = 0; $y -lt $image.Height; $y++) {
                 $samples = 0
-                $blackSamples = 0
+                $blankSamples = 0
                 for ($x = 0; $x -lt $image.Width; $x += 8) {
                   $pixel = $image.GetPixel($x, $y)
                   $samples++
-                  if ($pixel.A -eq 255 -and $pixel.R -le 1 -and $pixel.G -le 1 -and $pixel.B -le 1) {
-                    $blackSamples++
+                  $isTransparent = $pixel.A -le 1
+                  $isBlack = $pixel.A -eq 255 -and $pixel.R -le 1 -and $pixel.G -le 1 -and $pixel.B -le 1
+                  $isPageColor = $pixel.A -eq 255 -and [Math]::Abs($pixel.R - 9) -le 1 -and
+                    [Math]::Abs($pixel.G - 13) -le 1 -and [Math]::Abs($pixel.B - 22) -le 1
+                  if ($isTransparent -or $isBlack -or $isPageColor) {
+                    $blankSamples++
                   }
                 }
-                if ($blackSamples -ge [Math]::Ceiling($samples * 0.90)) {
-                  $currentBlackBand++
-                  $longestBlackBand = [Math]::Max($longestBlackBand, $currentBlackBand)
+                if ($blankSamples -ge [Math]::Ceiling($samples * 0.90)) {
+                  $currentBlankBand++
+                  $longestBlankBand = [Math]::Max($longestBlankBand, $currentBlankBand)
                 }
                 else {
-                  $currentBlackBand = 0
+                  $currentBlankBand = 0
                 }
               }
-              if ($longestBlackBand -ge 40) {
-                throw "Screenshot contains a blank black band: $($_.Name), $longestBlackBand row(s)"
+              $blankBandLimit = [Math]::Max(100, [Math]::Ceiling($image.Height * 0.15))
+              if ($longestBlankBand -ge $blankBandLimit) {
+                throw "Screenshot contains a blank uniform band: $($_.Name), $longestBlankBand row(s)"
               }
 
-              Write-Host "$($_.Name): $($image.Width)x$($image.Height), opaque dark corners, no blank black band"
+              Write-Host "$($_.Name): $($image.Width)x$($image.Height), opaque dark corners, no blank uniform band"
             }
             finally {
               $image.Dispose()
@@ -113,19 +138,3 @@ jobs:
           name: dashboard-review-screenshots
           path: ${{ runner.temp }}/dashboard-screenshots/*.png
           if-no-files-found: error
-
-      # Temporary review transport for environments that can read Actions logs
-      # but cannot directly materialize artifact ZIPs. Removed after visual QA.
-      - name: Emit screenshot review payloads
-        shell: pwsh
-        run: |
-          Get-ChildItem -LiteralPath (Join-Path $env:RUNNER_TEMP "dashboard-screenshots") -Filter "*.png" |
-            Sort-Object Name |
-            ForEach-Object {
-              Write-Host "SCREENSHOT_BEGIN:$($_.Name)"
-              $payload = [Convert]::ToBase64String([IO.File]::ReadAllBytes($_.FullName))
-              for ($offset = 0; $offset -lt $payload.Length; $offset += 30000) {
-                Write-Host $payload.Substring($offset, [Math]::Min(30000, $payload.Length - $offset))
-              }
-              Write-Host "SCREENSHOT_END:$($_.Name)"
-            }

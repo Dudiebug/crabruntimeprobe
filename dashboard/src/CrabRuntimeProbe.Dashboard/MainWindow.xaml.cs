@@ -55,26 +55,14 @@ public partial class MainWindow : Window
         ApplyDarkWindowChrome();
     }
 
-    private async Task CaptureReviewScreenshotsAsync(string overviewPath)
+    private async Task CaptureReviewScreenshotsAsync(string outputPath)
     {
-        var extension = Path.GetExtension(overviewPath);
-        if (string.IsNullOrWhiteSpace(extension)) extension = ".png";
-        var stem = Path.Combine(Path.GetDirectoryName(overviewPath)!, Path.GetFileNameWithoutExtension(overviewPath));
-        var targets = _screenshotView is { } requestedView
-            ? new[] { (View: requestedView, Path: overviewPath) }
-            : new[]
-            {
-                (View: DashboardScreenshotView.PlayGuide, Path: overviewPath),
-                (View: DashboardScreenshotView.AdvancedOverview, Path: stem + ".advanced-overview" + extension),
-                (View: DashboardScreenshotView.AdvancedChecklist, Path: stem + ".advanced-checklist" + extension),
-                (View: DashboardScreenshotView.AdvancedCoverage, Path: stem + ".advanced-needs-coverage" + extension)
-            };
-        foreach (var target in targets)
-        {
-            SelectScreenshotView(target.View);
-            await CompleteScreenshotLayoutAsync();
-            SaveWindowPng(target.Path);
-        }
+        // Capture one view per process. Reusing one retained WPF tree for several tab
+        // snapshots can omit unchanged regions in later RenderTargetBitmap renders.
+        // The CI workflow launches four isolated processes for the four review images.
+        SelectScreenshotView(_screenshotView ?? DashboardScreenshotView.PlayGuide);
+        await CompleteScreenshotLayoutAsync();
+        SaveWindowPng(outputPath);
     }
 
     private void SelectScreenshotView(DashboardScreenshotView view)
@@ -148,12 +136,10 @@ public partial class MainWindow : Window
             || contentWidthDip <= 0 || contentHeightDip <= 0)
             throw new InvalidOperationException("The dashboard content has not completed layout.");
 
-        // A FrameworkElement's margin belongs to its parent layout slot and is not part of the
-        // element's own rendered pixels. Recreate that client-area gutter in the bitmap so the
-        // review image matches the dashboard composition without capturing window chrome.
-        var margin = content.Margin;
-        var widthDip = contentWidthDip + margin.Left + margin.Right;
-        var heightDip = contentHeightDip + margin.Top + margin.Bottom;
+        // Render exactly the opaque root visual. Its parent-owned Margin is intentionally not
+        // part of the element's pixels and must not be added as an unpainted bitmap gutter.
+        var widthDip = contentWidthDip;
+        var heightDip = contentHeightDip;
         var dpi = VisualTreeHelper.GetDpi(content);
         var widthPixels = Math.Max(1, (int)Math.Ceiling(widthDip * dpi.DpiScaleX));
         var heightPixels = Math.Max(1, (int)Math.Ceiling(heightDip * dpi.DpiScaleY));
@@ -165,12 +151,10 @@ public partial class MainWindow : Window
         var bitmap = new RenderTargetBitmap(
             widthPixels, heightPixels, dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
 
-        // Render the live root visual directly. Reusing the root through consecutive
-        // VisualBrush snapshots can make WPF omit already-composited child regions after a
-        // tab switch, which produces a large black band in later review images. The root Grid
-        // is explicitly opaque; the background pass also preserves the client-area gutter if
-        // a future layout adds a margin. RenderTargetBitmap remains independent of the
-        // foreground desktop, monitor bounds, and screen scaling.
+        // Render the live opaque root directly. One isolated process renders one selected
+        // review view, avoiding retained-tree omissions across consecutive tab snapshots.
+        // RenderTargetBitmap remains independent of the foreground desktop, monitor bounds,
+        // and screen scaling.
         var backgroundVisual = new DrawingVisual();
         using (var drawing = backgroundVisual.RenderOpen())
             drawing.DrawRectangle(background, null, bounds);
