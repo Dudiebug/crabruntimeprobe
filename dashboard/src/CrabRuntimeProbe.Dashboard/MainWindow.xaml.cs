@@ -158,35 +158,24 @@ public partial class MainWindow : Window
         var widthPixels = Math.Max(1, (int)Math.Ceiling(widthDip * dpi.DpiScaleX));
         var heightPixels = Math.Max(1, (int)Math.Ceiling(heightDip * dpi.DpiScaleY));
         var bounds = new Rect(0, 0, widthDip, heightDip);
-        var sourceBounds = new Rect(0, 0, contentWidthDip, contentHeightDip);
-        var contentBounds = new Rect(margin.Left, margin.Top, contentWidthDip, contentHeightDip);
         var background = Background
             ?? Application.Current.TryFindResource("PageBrush") as System.Windows.Media.Brush
             ?? System.Windows.Media.Brushes.Black;
 
-        // Draw the content through a VisualBrush over an explicit background. Rendering the
-        // window directly leaves transparent pixels where its root Grid has no background;
-        // those pixels appear white in many image viewers. This path is also independent of
-        // the desktop, foreground window, monitor bounds, and screen scaling.
-        var snapshot = new DrawingVisual();
-        using (var drawing = snapshot.RenderOpen())
-        {
-            drawing.DrawRectangle(background, null, bounds);
-            drawing.DrawRectangle(new VisualBrush(content)
-            {
-                AlignmentX = AlignmentX.Left,
-                AlignmentY = AlignmentY.Top,
-                Stretch = Stretch.Fill,
-                Viewbox = sourceBounds,
-                ViewboxUnits = BrushMappingMode.Absolute,
-                Viewport = contentBounds,
-                ViewportUnits = BrushMappingMode.Absolute
-            }, null, contentBounds);
-        }
-
         var bitmap = new RenderTargetBitmap(
             widthPixels, heightPixels, dpi.PixelsPerInchX, dpi.PixelsPerInchY, PixelFormats.Pbgra32);
-        bitmap.Render(snapshot);
+
+        // Render the live root visual directly. Reusing the root through consecutive
+        // VisualBrush snapshots can make WPF omit already-composited child regions after a
+        // tab switch, which produces a large black band in later review images. The root Grid
+        // is explicitly opaque; the background pass also preserves the client-area gutter if
+        // a future layout adds a margin. RenderTargetBitmap remains independent of the
+        // foreground desktop, monitor bounds, and screen scaling.
+        var backgroundVisual = new DrawingVisual();
+        using (var drawing = backgroundVisual.RenderOpen())
+            drawing.DrawRectangle(background, null, bounds);
+        bitmap.Render(backgroundVisual);
+        bitmap.Render(content);
         bitmap.Freeze();
 
         var encoder = new PngBitmapEncoder();

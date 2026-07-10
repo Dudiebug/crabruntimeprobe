@@ -72,7 +72,35 @@ jobs:
                   throw "Screenshot corner is not opaque page color: $($_.Name) ARGB=$($pixel.A),$($pixel.R),$($pixel.G),$($pixel.B)"
                 }
               }
-              Write-Host "$($_.Name): $($image.Width)x$($image.Height), opaque dark corners"
+
+              # A failed WPF composition pass can leave a wide, pure-black band while all
+              # four corners still look correct. Sample every eighth pixel and reject any
+              # long run of rows that is overwhelmingly black.
+              $longestBlackBand = 0
+              $currentBlackBand = 0
+              for ($y = 0; $y -lt $image.Height; $y++) {
+                $samples = 0
+                $blackSamples = 0
+                for ($x = 0; $x -lt $image.Width; $x += 8) {
+                  $pixel = $image.GetPixel($x, $y)
+                  $samples++
+                  if ($pixel.A -eq 255 -and $pixel.R -le 1 -and $pixel.G -le 1 -and $pixel.B -le 1) {
+                    $blackSamples++
+                  }
+                }
+                if ($blackSamples -ge [Math]::Ceiling($samples * 0.90)) {
+                  $currentBlackBand++
+                  $longestBlackBand = [Math]::Max($longestBlackBand, $currentBlackBand)
+                }
+                else {
+                  $currentBlackBand = 0
+                }
+              }
+              if ($longestBlackBand -ge 40) {
+                throw "Screenshot contains a blank black band: $($_.Name), $longestBlackBand row(s)"
+              }
+
+              Write-Host "$($_.Name): $($image.Width)x$($image.Height), opaque dark corners, no blank black band"
             }
             finally {
               $image.Dispose()
