@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/hook-run-classification-v1.schema.json",
+  "title": "CrabRuntimeProbe hook run classification v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "classifiedAtUtc", "classification", "outcome", "confidence", "candidateId", "validationDepth", "lastCompletedBoundary", "lastUnmatchedBoundary", "reason", "recommendation", "automaticRearmAllowed", "evidence"],
+  "properties": {
+    "schemaVersion": { "const": "hook-run-classification-v1" },
+    "runId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "classifiedAtUtc": { "type": "string", "format": "date-time", "maxLength": 64 },
+    "classification": { "enum": ["clean-shutdown", "interrupted-run", "external-termination", "stale-writer", "registration-failure", "callback-boundary-failure", "evidence-failure", "unattributed-post-callback-crash"] },
+    "outcome": { "enum": ["registration-clean", "registered-not-naturally-observed", "natural-callback-clean", "crash-suspect", "needs-revalidation", "unsupported", "unattributed", "incomplete"] },
+    "confidence": { "enum": ["none", "low", "medium", "high"] },
+    "candidateId": { "type": ["string", "null"], "maxLength": 128 },
+    "validationDepth": { "type": ["integer", "null"], "minimum": 1, "maximum": 7 },
+    "lastCompletedBoundary": { "type": ["string", "null"], "maxLength": 64 },
+    "lastUnmatchedBoundary": { "type": ["string", "null"], "maxLength": 64 },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 2048 },
+    "recommendation": { "enum": ["repeat-same-test", "prepare-next-depth", "trusted-pool-control", "canary-alone", "combined", "controlled-subset", "return-safe-play-guide", "manual-review"] },
+    "automaticRearmAllowed": { "const": false },
+    "evidence": { "type": "array", "maxItems": 64, "items": { "type": "string", "maxLength": 512 } }
+  }
+}

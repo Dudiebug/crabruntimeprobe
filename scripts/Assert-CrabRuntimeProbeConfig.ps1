@@ -17,7 +17,17 @@ $script:CrabRuntimeProbeRequiredModFiles = @(
   "Scripts\passive_hook_manager.lua",
   "Scripts\inventory_stage_manager.lua",
   "Scripts\full_observe_coordinator.lua",
-  "Scripts\crabsync_catalog.lua"
+  "Scripts\crabsync_catalog.lua",
+  "Scripts\research_hook_catalog.lua",
+  "Scripts\progressive_json_reader.lua",
+  "Scripts\progressive_artifact_guard.lua",
+  "Scripts\progressive_config.lua",
+  "Scripts\progressive_breadcrumb_journal.lua",
+  "Scripts\progressive_run_manifest.lua",
+  "Scripts\progressive_depth_callbacks.lua",
+  "Scripts\progressive_hook_runner.lua",
+  "Scripts\progressive_observe_coordinator.lua",
+  "Scripts\relic_count_validator.lua"
 )
 
 $script:CrabRuntimeProbeRequiredConfigDefaults = [ordered]@{
@@ -59,6 +69,24 @@ $script:CrabRuntimeProbeRequiredConfigDefaults = [ordered]@{
   allowPassiveObservationHooks = "false"
   allowFullObserveInventoryStages = "false"
   allowFullObserveRuntimeDiscovery = "false"
+  progressiveObservationEnabled = "false"
+  researchRunType = "combined"
+  researchRunId = "unassigned"
+  compatibilityFingerprint = "unassigned"
+  compatibilityGameBuild = "unknown"
+  compatibilityUe4ssVersion = "unknown"
+  compatibilityComputedAtUtc = "unassigned"
+  researchCoverageCatalogHash = "unassigned"
+  researchHookCatalogIdentity = "unassigned"
+  researchCallbackImplementationVersion = "unassigned"
+  researchCallbackSchemaVersion = "unassigned"
+  researchValidationBehaviorVersion = "unassigned"
+  trustedCandidateSelections = ""
+  canaryCandidateId = "unassigned"
+  canaryHookPathFingerprint = "unassigned"
+  canaryValidationDepth = "0"
+  canaryState = "untested"
+  relicCountValidationEnabled = "false"
   statusWriterEnabled = "false"
   allowWriteProbes = "false"
   allowRpcProbes = "false"
@@ -522,9 +550,20 @@ function Assert-CrabRuntimeProbeSnapshotObservationSchema {
       throw "$Label safety contract does not require '$field'."
     }
     $property = $schema.properties.safety.properties.$field
-    if ($null -eq $property -or $property.const -ne $true) {
+    if ($field -eq 'hooksDisabled') {
+      if ($null -eq $property -or $property.type -ne 'boolean') {
+        throw "$Label must type hooksDisabled as a mode-discriminated boolean."
+      }
+    } elseif ($null -eq $property -or $property.const -ne $true) {
       throw "$Label safety contract must require $field=true."
     }
+  }
+  $profileContract = @($schema.allOf) | Select-Object -First 1
+  if ($null -eq $profileContract -or
+      $profileContract.if.properties.observationProfile.const -ne 'progressive-broad-observation' -or
+      $profileContract.then.properties.safety.properties.hooksDisabled.const -ne $false -or
+      $profileContract.else.properties.safety.properties.hooksDisabled.const -ne $true) {
+    throw "$Label must require hooksDisabled=false only for explicitly discriminated progressive rows and true otherwise."
   }
 }
 

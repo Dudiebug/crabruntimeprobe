@@ -13,6 +13,7 @@ public enum DashboardScreenshotView
 {
     PlayGuide,
     AdvancedOverview,
+    AdvancedResearch,
     AdvancedChecklist,
     AdvancedCoverage
 }
@@ -82,8 +83,9 @@ public partial class MainWindow : Window
         RootTabs.SelectedIndex = view switch
         {
             DashboardScreenshotView.AdvancedOverview => 0,
-            DashboardScreenshotView.AdvancedChecklist => 1,
-            DashboardScreenshotView.AdvancedCoverage => 2,
+            DashboardScreenshotView.AdvancedResearch => 1,
+            DashboardScreenshotView.AdvancedChecklist => 2,
+            DashboardScreenshotView.AdvancedCoverage => 3,
             _ => throw new ArgumentOutOfRangeException(nameof(view), view, null)
         };
         if (view == DashboardScreenshotView.AdvancedChecklist && AdvancedChecklistList.Items.Count > 0)

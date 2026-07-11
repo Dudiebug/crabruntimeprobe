@@ -235,7 +235,10 @@ function safe.redactedObjectSummary(obj, allowAssetPath)
   end
   local fullName = safe.getFullName(obj)
   local className = safe.getObjectClassName(obj)
-  local fingerprint = safe.fingerprintValue(fullName or tostring(obj))
+  -- Never stringify a UObject as a fallback. UE4SS object formatting can expose
+  -- an address and may touch a stale native representation. An unavailable
+  -- GetFullName result remains an unavailable fingerprint.
+  local fingerprint = safe.fingerprintValue(type(fullName) == 'string' and fullName or '')
   local pathSummary = '<redacted-instance>'
   if allowAssetPath == true then
     local text = tostring(fullName or '')
@@ -279,7 +282,8 @@ function safe.summarizeHookArgument(param, spec, options)
   local value, err = safe.getHookParam(param)
   if err then
     summary.status = 'error'
-    summary.valueSummary = cleanSummary(err, 120)
+    local errorFingerprint = safe.fingerprintValue(err)
+    summary.valueSummary = 'errorFingerprint=' .. tostring(errorFingerprint)
     return summary
   end
   if value == nil then

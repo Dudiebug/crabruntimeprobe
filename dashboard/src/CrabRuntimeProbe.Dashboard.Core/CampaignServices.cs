@@ -224,6 +224,83 @@ public sealed class CampaignService
         return state;
     }
 
+    public async Task<string> ArmProgressiveObservationAsync(
+        LocalCampaignState state,
+        ResearchRunPlan plan,
+        bool relicCountValidationEnabled = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (!plan.IsValid || plan.Manifest is null)
+            throw new InvalidOperationException("A rejected research plan cannot be armed.");
+        var manifest = plan.Manifest;
+        if (manifest.SessionId != state.SessionId || manifest.CampaignGeneration != state.Generation ||
+            manifest.SelectedRole != state.Role)
+            throw new InvalidDataException("Research manifest does not match the prepared campaign generation.");
+        if (!manifest.Compatibility.IsComplete)
+            throw new InvalidDataException("Research compatibility inputs are incomplete.");
+        if (manifest.AutomaticInProcessAdvance || manifest.Canary is not null && manifest.RegistrationOrder[^1] != manifest.Canary.CandidateId)
+            throw new InvalidDataException("Research manifest violates the process-boundary or canary-last invariant.");
+        var installation = new GameInstallation(state.GameDirectory, state.ExecutablePath, "prepared-campaign");
+        if (new GameProcessService().IsRunning(installation))
+            throw new InvalidOperationException("Close Crab Champions before arming a different candidate or depth.");
+        var scripts = Path.GetDirectoryName(state.StatusDirectory)
+                      ?? throw new DirectoryNotFoundException("Prepared RuntimeProbe scripts directory is invalid.");
+        var configPath = Path.Combine(scripts, "config.txt");
+        var manifestPath = Path.Combine(state.StatusDirectory, $"hook_run_manifest_{manifest.RunId}.json");
+
+        // The immutable run identity is durably published before the config can authorize registration.
+        await new ResearchArtifactStore().WriteRunManifestAsync(manifestPath, manifest, cancellationToken)
+            .ConfigureAwait(false);
+        var trustedSelections = string.Join(",", manifest.TrustedCandidates.Select(candidate =>
+            $"{candidate.CandidateId}@{(int)candidate.ValidationDepth}@{candidate.HookPathFingerprint}"));
+        var required = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["progressiveObservationEnabled"] = "true",
+            ["researchRunType"] = ResearchArtifactStore.RunTypeContract(manifest.RunType),
+            ["researchRunId"] = manifest.RunId,
+            ["compatibilityFingerprint"] = manifest.Compatibility.Fingerprint,
+            ["compatibilityGameBuild"] = manifest.Compatibility.GameBuild,
+            ["compatibilityUe4ssVersion"] = manifest.Compatibility.Ue4ssVersion,
+            ["compatibilityComputedAtUtc"] = manifest.Compatibility.ComputedAtUtc.ToUniversalTime().ToString("O"),
+            ["researchCoverageCatalogHash"] = manifest.Compatibility.CoverageCatalogHash,
+            ["researchHookCatalogIdentity"] = manifest.Compatibility.HookCatalogIdentity,
+            ["researchCallbackImplementationVersion"] = manifest.Compatibility.CallbackImplementationVersion,
+            ["researchCallbackSchemaVersion"] = manifest.Compatibility.CallbackSchemaVersion,
+            ["researchValidationBehaviorVersion"] = manifest.Compatibility.ValidationBehaviorVersion,
+            ["trustedCandidateSelections"] = trustedSelections,
+            ["canaryCandidateId"] = manifest.Canary?.CandidateId ?? "unassigned",
+            ["canaryHookPathFingerprint"] = manifest.Canary?.HookPathFingerprint ?? string.Empty,
+            ["canaryValidationDepth"] = ((int?)manifest.Canary?.ValidationDepth ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["canaryState"] = manifest.Canary is null ? "untested" : "armed",
+            ["relicCountValidationEnabled"] = relicCountValidationEnabled ? "true" : "false",
+            ["allowPassiveObservationHooks"] = "false",
+            ["allowFullObserveRuntimeDiscovery"] = "false",
+            ["allowFullObserveInventoryStages"] = "false",
+            ["allowWriteProbes"] = "false",
+            ["allowRpcProbes"] = "false",
+            ["allowHudTickHook"] = "false",
+            ["allowRawIdentityEvidence"] = "false"
+        };
+        await UpdateConfigAsync(configPath, required, cancellationToken).ConfigureAwait(false);
+        return manifestPath;
+    }
+
+    public Task DisarmProgressiveObservationAsync(
+        LocalCampaignState state,
+        CancellationToken cancellationToken = default)
+    {
+        var scripts = Path.GetDirectoryName(state.StatusDirectory)
+                      ?? throw new DirectoryNotFoundException("Prepared RuntimeProbe scripts directory is invalid.");
+        return ConfigureFullObserveAsync(
+            Path.Combine(scripts, "config.txt"),
+            state.Role,
+            state.CampaignName,
+            state.Generation,
+            state.SessionId,
+            state.MachineId,
+            cancellationToken);
+    }
+
     public async Task<LocalCampaignState?> ResumeAsync(
         CancellationToken cancellationToken = default,
         string? dashboardExecutablePath = null)
@@ -493,6 +570,24 @@ public sealed class CampaignService
             ["allowInventoryUserdataIntrospectionProbes"] = "false",
             ["allowInventoryArrayCountProbes"] = "false",
             ["allowInventoryElementDataAssetReadProbes"] = "false"
+            , ["progressiveObservationEnabled"] = "false"
+            , ["researchRunType"] = "safe-play-guide"
+            , ["researchRunId"] = "unassigned"
+            , ["compatibilityFingerprint"] = ""
+            , ["compatibilityGameBuild"] = "unknown"
+            , ["compatibilityUe4ssVersion"] = "unknown"
+            , ["compatibilityComputedAtUtc"] = ""
+            , ["researchCoverageCatalogHash"] = ""
+            , ["researchHookCatalogIdentity"] = ""
+            , ["researchCallbackImplementationVersion"] = ""
+            , ["researchCallbackSchemaVersion"] = ""
+            , ["researchValidationBehaviorVersion"] = ""
+            , ["trustedCandidateSelections"] = ""
+            , ["canaryCandidateId"] = "unassigned"
+            , ["canaryHookPathFingerprint"] = ""
+            , ["canaryValidationDepth"] = "0"
+            , ["canaryState"] = "untested"
+            , ["relicCountValidationEnabled"] = "false"
         };
 
         var lines = (await File.ReadAllLinesAsync(configPath, cancellationToken).ConfigureAwait(false)).ToList();
@@ -526,6 +621,37 @@ public sealed class CampaignService
             if (!parsed.TryGetValue(pair.Key, out var actual) || !string.Equals(actual, pair.Value, StringComparison.Ordinal))
                 throw new InvalidDataException($"Installed config validation failed for {pair.Key}.");
         }
+    }
+
+    private static async Task UpdateConfigAsync(
+        string configPath,
+        IReadOnlyDictionary<string, string> required,
+        CancellationToken cancellationToken)
+    {
+        if (!File.Exists(configPath)) throw new FileNotFoundException("Installed RuntimeProbe config is missing.", configPath);
+        await BackupConfigAsync(configPath, cancellationToken).ConfigureAwait(false);
+        var lines = (await File.ReadAllLinesAsync(configPath, cancellationToken).ConfigureAwait(false)).ToList();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < lines.Count; index++)
+        {
+            var equals = lines[index].IndexOf('=');
+            if (equals <= 0) continue;
+            var key = lines[index][..equals].Trim();
+            if (!required.TryGetValue(key, out var value)) continue;
+            lines[index] = $"{key} = {value}";
+            seen.Add(key);
+        }
+        foreach (var pair in required.Where(pair => !seen.Contains(pair.Key))) lines.Add($"{pair.Key} = {pair.Value}");
+        await AtomicFile.WriteTextAsync(configPath,
+            string.Join(Environment.NewLine, lines) + Environment.NewLine, cancellationToken).ConfigureAwait(false);
+        var parsed = (await File.ReadAllLinesAsync(configPath, cancellationToken).ConfigureAwait(false))
+            .Select(line => (Line: line, Separator: line.IndexOf('=')))
+            .Where(item => item.Separator > 0)
+            .ToDictionary(item => item.Line[..item.Separator].Trim(), item => item.Line[(item.Separator + 1)..].Trim(),
+                StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in required)
+            if (!parsed.TryGetValue(pair.Key, out var actual) || actual != pair.Value)
+                throw new InvalidDataException($"Installed config validation failed for {pair.Key}.");
     }
 
     private static Task ConfigureDashboardAutoStartAsync(

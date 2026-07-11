@@ -30,7 +30,7 @@
     "bundleFormat": { "const": "crabruntimeprobe-evidence-bundle-v1" },
     "campaignId": { "type": "string", "minLength": 1 },
     "campaignName": { "type": "string", "minLength": 1 },
-    "profileId": { "const": "crabsync-full-observe" },
+    "profileId": { "enum": ["crabsync-full-observe", "progressive-broad-observation"] },
     "campaignGeneration": { "type": "integer", "minimum": 1 },
     "machineId": { "type": "string", "minLength": 1 },
     "sessionId": { "type": "string", "minLength": 1 },
@@ -53,7 +53,11 @@
         "hudHookDisabled",
         "hooksDisabled",
         "runtimeDiscoveryDisabled",
-        "inventoryStagesDisabled"
+        "inventoryStagesDisabled",
+        "controlledResearchHooks",
+        "compatibilityValidated",
+        "trustedDepthEnforced",
+        "activeCanaries"
       ],
       "properties": {
         "writesDisabled": { "type": "boolean" },
@@ -63,7 +67,11 @@
         "hudHookDisabled": { "type": "boolean" },
         "hooksDisabled": { "type": "boolean" },
         "runtimeDiscoveryDisabled": { "type": "boolean" },
-        "inventoryStagesDisabled": { "type": "boolean" }
+        "inventoryStagesDisabled": { "type": "boolean" },
+        "controlledResearchHooks": { "type": "boolean" },
+        "compatibilityValidated": { "type": "boolean" },
+        "trustedDepthEnforced": { "type": "boolean" },
+        "activeCanaries": { "type": "integer", "minimum": 0, "maximum": 1 }
       }
     },
     "manifestSelfExcluded": { "const": true },
@@ -94,5 +102,51 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "profileId": { "const": "crabsync-full-observe" } } },
+      "then": {
+        "properties": {
+          "safety": {
+            "properties": {
+              "writesDisabled": { "const": true },
+              "rpcCallsDisabled": { "const": true },
+              "mutationDisabled": { "const": true },
+              "rawIdentityDisabled": { "const": true },
+              "hudHookDisabled": { "const": true },
+              "hooksDisabled": { "const": true },
+              "runtimeDiscoveryDisabled": { "const": true },
+              "inventoryStagesDisabled": { "const": true },
+              "controlledResearchHooks": { "const": false },
+              "compatibilityValidated": { "const": false },
+              "trustedDepthEnforced": { "const": false },
+              "activeCanaries": { "const": 0 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "profileId": { "const": "progressive-broad-observation" } } },
+      "then": {
+        "properties": {
+          "safety": {
+            "properties": {
+              "writesDisabled": { "const": true },
+              "rpcCallsDisabled": { "const": true },
+              "mutationDisabled": { "const": true },
+              "rawIdentityDisabled": { "const": true },
+              "hudHookDisabled": { "const": true },
+              "runtimeDiscoveryDisabled": { "const": true },
+              "inventoryStagesDisabled": { "const": true },
+              "controlledResearchHooks": { "const": true },
+              "compatibilityValidated": { "const": true },
+              "trustedDepthEnforced": { "const": true }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

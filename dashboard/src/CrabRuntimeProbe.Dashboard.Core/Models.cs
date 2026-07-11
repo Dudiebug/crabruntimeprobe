@@ -46,6 +46,18 @@ public enum EvidenceCleanliness
     Unknown
 }
 
+public enum LiveCollectionState
+{
+    GameUnavailable,
+    Warming,
+    Stable,
+    Ready,
+    Collecting,
+    Stale,
+    Stopped,
+    Faulted
+}
+
 public static class CampaignRoleNames
 {
     public static CampaignRole Parse(string? value) => Normalize(value) switch
@@ -72,7 +84,12 @@ public sealed record LifecycleInfo(
     string World,
     string Context,
     bool Stable,
-    DateTimeOffset? ChangedAtUtc);
+    DateTimeOffset? ChangedAtUtc,
+    int StableSamples = 0,
+    int StableSamplesRequired = 0,
+    double StableDwellSeconds = 0,
+    double StableDwellSecondsRequired = 0,
+    string StabilityResetReason = "");
 
 public sealed record RuntimeInfo(
     bool GameProcessRunning,
@@ -81,7 +98,12 @@ public sealed record RuntimeInfo(
     string RuntimeProbeState,
     bool RuntimeProbeLoaded,
     string CurrentProbeStage,
-    int? GameProcessId);
+    int? GameProcessId,
+    string ActiveProfile = "",
+    string CurrentSamplingCategory = "",
+    bool? CollectionReady = null,
+    bool StopRequested = false,
+    long EvidenceSequence = 0);
 
 public sealed record SafetyInfo(
     bool WritesDisabled,
@@ -98,6 +120,15 @@ public sealed record SafetyInfo(
     public bool AllRequiredSafe =>
         WritesDisabled && RpcsDisabled && MutationDisabled && HudHookDisabled && RawIdentityDisabled
         && HooksDisabled && RuntimeDiscoveryDisabled && InventoryStagesDisabled;
+
+    public bool AllNonHookOperationsDisabled =>
+        WritesDisabled && RpcsDisabled && MutationDisabled && HudHookDisabled && RawIdentityDisabled
+        && RuntimeDiscoveryDisabled && InventoryStagesDisabled;
+
+    public bool IsSafeForProfile(string? profileId) =>
+        string.Equals(profileId, "progressive-broad-observation", StringComparison.OrdinalIgnoreCase)
+            ? AllNonHookOperationsDisabled
+            : AllRequiredSafe;
 }
 
 public sealed record ChecklistEvidence(
@@ -160,7 +191,7 @@ public sealed record LiveStatusSnapshot(
         "unknown",
         new LifecycleInfo("not-started", 0, string.Empty, string.Empty, false, null),
         new RuntimeInfo(false, "not-running", "unknown", "not-loaded", false, "idle", null),
-        new SafetyInfo(true, true, true, true, true, true, true, true, 0,
+        new SafetyInfo(false, false, false, false, false, false, false, false, 0,
             new ReadOnlyDictionary<string, string>(new Dictionary<string, string>())),
         new ReadOnlyDictionary<string, ChecklistEvidence>(new Dictionary<string, ChecklistEvidence>()),
         new EvidenceHealthInfo("no-evidence", 0, 0, 0, string.Empty),
@@ -175,15 +206,85 @@ public sealed record LiveStatusReadResult(
     bool IsStale,
     bool UsedLastGood,
     string Error,
-    DateTimeOffset ReadAtUtc)
+    DateTimeOffset ReadAtUtc,
+    long? PreviousSequence = null)
 {
     public EvidenceCleanliness Cleanliness => Snapshot.CrashSuspected
         ? EvidenceCleanliness.CrashSuspect
-        : Snapshot.DirtyEvidence || UsedLastGood
+        : Snapshot.DirtyEvidence || IsStale || UsedLastGood
             ? EvidenceCleanliness.Dirty
             : HasSnapshot
                 ? EvidenceCleanliness.Clean
                 : EvidenceCleanliness.Unknown;
+}
+
+public sealed record StatusReadScope(
+    string CampaignId,
+    long CampaignGeneration,
+    string SessionId,
+    string MachineId,
+    CampaignRole SelectedRole = CampaignRole.Unknown)
+{
+    public static StatusReadScope FromCampaign(LocalCampaignState campaign) => new(
+        campaign.CampaignId,
+        campaign.Generation,
+        campaign.SessionId,
+        campaign.MachineId,
+        campaign.Role);
+
+    public bool Matches(LiveStatusSnapshot snapshot) =>
+        snapshot.CampaignId.Equals(CampaignId, StringComparison.Ordinal)
+        && snapshot.CampaignGeneration == CampaignGeneration
+        && snapshot.SessionId.Equals(SessionId, StringComparison.Ordinal)
+        && snapshot.MachineId.Equals(MachineId, StringComparison.Ordinal)
+        && (SelectedRole == CampaignRole.Unknown || snapshot.SelectedRole == SelectedRole);
+}
+
+public sealed record ObservationCapabilityProfile(
+    string ProfileId,
+    IReadOnlySet<string> ObservableChecklistIds,
+    string LimitationSummary)
+{
+    public bool CanObserve(string checklistId) => ObservableChecklistIds.Contains(checklistId);
+}
+
+public sealed record LiveDashboardStatus(
+    LiveCollectionState State,
+    string StateText,
+    string Detail,
+    TimeSpan? HeartbeatAge,
+    string HeartbeatAgeText,
+    long Sequence,
+    string SequenceText,
+    bool SequenceAdvanced,
+    string ActiveProfile,
+    string SamplingCategory,
+    string SamplingCategoryText,
+    string ReadinessText,
+    bool CollectionReady,
+    bool HasFreshWriter,
+    bool SafetyProven,
+    bool HasClockSkew,
+    ObservationCapabilityProfile Capabilities)
+{
+    public static LiveDashboardStatus Empty { get; } = new(
+        LiveCollectionState.GameUnavailable,
+        "GAME UNAVAILABLE",
+        "Start Crab Champions and wait for a completed RuntimeProbe status snapshot.",
+        null,
+        "No heartbeat",
+        0,
+        "No sequence",
+        false,
+        "unknown",
+        string.Empty,
+        "Not sampling",
+        "Not ready",
+        false,
+        false,
+        false,
+        false,
+        NormalObservationCapabilities.ForProfile("unknown"));
 }
 
 public sealed record ChecklistDefinition(
@@ -221,11 +322,15 @@ public sealed record ChecklistViewItem(
 
 public sealed record PlayGuideSubtask(
     string Label,
-    PlayGuideDisplayState State)
+    PlayGuideDisplayState State,
+    bool CanObserve = true,
+    string ObservabilityExplanation = "")
 {
     public string StateText => PlayGuideStateNames.Text(State);
     public string StateIcon => PlayGuideStateNames.Icon(State);
     public string AutomationName => $"{Label}: {StateText}";
+    public bool IsNotObservable => !CanObserve;
+    public bool HasObservabilityExplanation => !string.IsNullOrWhiteSpace(ObservabilityExplanation);
 }
 
 public sealed record PlayGuideAction(
@@ -237,13 +342,17 @@ public sealed record PlayGuideAction(
     IReadOnlyList<string> LinkedChecklistIds,
     IReadOnlyList<PlayGuideSubtask> Subtasks,
     bool IsAutomatic,
-    bool HasMappingWarning)
+    bool HasMappingWarning,
+    bool CanObserve = true,
+    string ObservabilityExplanation = "")
 {
     public string StateText => PlayGuideStateNames.Text(State);
     public string StateIcon => PlayGuideStateNames.Icon(State);
     public string AutomationName => $"{Title}: {StateText}";
     public bool IsDone => State == PlayGuideDisplayState.Done;
     public bool HasSubtasks => Subtasks.Count > 0;
+    public bool IsNotObservable => !CanObserve;
+    public bool HasObservabilityExplanation => !string.IsNullOrWhiteSpace(ObservabilityExplanation);
 }
 
 public sealed record PlayGuideCategory(
@@ -377,13 +486,36 @@ public sealed record BundleSafety(
     bool HudHookDisabled,
     bool HooksDisabled,
     bool RuntimeDiscoveryDisabled,
-    bool InventoryStagesDisabled)
+    bool InventoryStagesDisabled,
+    bool ControlledResearchHooks = false,
+    bool CompatibilityValidated = false,
+    bool TrustedDepthEnforced = false,
+    int ActiveCanaries = 0)
 {
-    public static BundleSafety ReadOnly { get; } = new(true, true, true, true, true, true, true, true);
+    public static BundleSafety ReadOnly { get; } = new(
+        true, true, true, true, true, true, true, true,
+        false, false, false, 0);
+
     [System.Text.Json.Serialization.JsonIgnore]
     public bool AllDisabled => WritesDisabled && RpcCallsDisabled && MutationDisabled
                                && RawIdentityDisabled && HudHookDisabled && HooksDisabled
                                && RuntimeDiscoveryDisabled && InventoryStagesDisabled;
+
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool AllNonHookOperationsDisabled => WritesDisabled && RpcCallsDisabled && MutationDisabled
+                                                && RawIdentityDisabled && HudHookDisabled
+                                                && RuntimeDiscoveryDisabled && InventoryStagesDisabled;
+
+    public bool IsAcceptableForProfile(string? profileId)
+    {
+        if (string.Equals(profileId, "progressive-broad-observation", StringComparison.OrdinalIgnoreCase))
+            return AllNonHookOperationsDisabled && ControlledResearchHooks && CompatibilityValidated
+                   && TrustedDepthEnforced && ActiveCanaries is >= 0 and <= 1;
+
+        return string.Equals(profileId, "crabsync-full-observe", StringComparison.OrdinalIgnoreCase)
+               && AllDisabled && !ControlledResearchHooks && !CompatibilityValidated
+               && !TrustedDepthEnforced && ActiveCanaries == 0;
+    }
 }
 
 public sealed record BundleManifest(

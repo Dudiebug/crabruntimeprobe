@@ -125,6 +125,10 @@ function campaignState.new(sessionId, config, catalog)
     stoppedAt = '',
     stopRequested = false,
     probeStage = 'startup',
+    workflow = (config or {}).progressiveObservationEnabled == true and 'progressive-broad-observation' or 'normal-play-guide',
+    activeProfile = (config or {}).progressiveObservationEnabled == true and 'progressive-broad-observation' or 'normal-play-guide',
+    currentSamplingCategory = '',
+    collectionReadiness = 'warming',
     inventoryDepth = 0,
     evidenceHealth = 'healthy',
     crashSuspected = false,
@@ -134,6 +138,28 @@ function campaignState.new(sessionId, config, catalog)
     hookRegistration = {},
     circuitBreakers = {},
     inventoryStages = {},
+    research = {
+      runId = '',
+      runType = '',
+      stage = '',
+      trustedHookCount = 0,
+      registeredHookCount = 0,
+      activeCanaryId = '',
+      canaryValidationDepth = 0,
+      suggestedAction = '',
+      canaryRegistrationState = 'not-configured',
+      callbackCount = 0,
+      canaryCallbackCount = 0,
+      canaryCircuitBreakers = {},
+      journal = {},
+      registrationOrder = {},
+      safeSnapshotBaselineReady = false,
+      automaticInProcessAdvance = false,
+      researchAllowed = false,
+      registrationAttempted = false,
+      registrationComplete = false,
+      relicCount = {}
+    },
     stability = {
       ready = false,
       consecutiveSamples = 0,
@@ -250,6 +276,65 @@ function campaignState.new(sessionId, config, catalog)
     self.stability.requiredDwellSeconds = tonumber(details.requiredDwellSeconds) or self.stability.requiredDwellSeconds
     self.stability.candidateFingerprint = tostring(details.candidateFingerprint or '')
     self.stability.resetReason = recordBuilder.cleanString(details.resetReason or self.stability.resetReason, 160)
+  end
+
+  function state:setSamplingState(category, readiness)
+    self.currentSamplingCategory = recordBuilder.cleanString(category or '', 64)
+    if readiness ~= nil and readiness ~= '' then
+      self.collectionReadiness = recordBuilder.cleanString(readiness, 64)
+    end
+  end
+
+  function state:setResearchSummary(summary)
+    summary = type(summary) == 'table' and summary or {}
+    local journal = type(summary.journal) == 'table' and summary.journal or {}
+    local relicCount = type(summary.relicCount) == 'table' and summary.relicCount or {}
+    local registrationOrder = {}
+    for index, candidateId in ipairs(summary.registrationOrder or {}) do
+      if index > 112 then break end
+      registrationOrder[index] = recordBuilder.cleanString(candidateId, 128)
+    end
+    self.research = {
+      runId = recordBuilder.cleanString(summary.runId or '', 128),
+      runType = recordBuilder.cleanString(summary.runType or '', 32),
+      stage = recordBuilder.cleanString(summary.stage or '', 96),
+      trustedHookCount = tonumber(summary.trustedHookCount) or 0,
+      registeredHookCount = tonumber(summary.registeredHookCount) or 0,
+      activeCanaryId = recordBuilder.cleanString(summary.activeCanaryId or '', 128),
+      canaryValidationDepth = tonumber(summary.canaryValidationDepth) or 0,
+      suggestedAction = recordBuilder.cleanString(summary.suggestedAction or '', 256),
+      canaryRegistrationState = recordBuilder.cleanString(summary.canaryRegistrationState or '', 64),
+      callbackCount = tonumber(summary.callbackCount) or 0,
+      canaryCallbackCount = tonumber(summary.canaryCallbackCount) or 0,
+      canaryCircuitBreakers = recordBuilder.safeValue(summary.canaryCircuitBreakers or {}),
+      journal = {
+        state = recordBuilder.cleanString(journal.state or '', 32),
+        sequence = tonumber(journal.sequence) or 0,
+        recordCount = tonumber(journal.recordCount) or 0,
+        recordCap = tonumber(journal.recordCap) or 0,
+        lastBoundary = recordBuilder.cleanString(journal.lastBoundary or '', 64),
+        lastCompletedBoundary = recordBuilder.cleanString(journal.lastCompletedBoundary or '', 64),
+        lastCandidateId = recordBuilder.cleanString(journal.lastCandidateId or '', 128),
+        faultReason = recordBuilder.cleanString(journal.faultReason or '', 96)
+      },
+      registrationOrder = registrationOrder,
+      safeSnapshotBaselineReady = summary.safeSnapshotBaselineReady == true,
+      automaticInProcessAdvance = false,
+      researchAllowed = summary.researchAllowed == true,
+      registrationAttempted = summary.registrationAttempted == true,
+      registrationComplete = summary.registrationComplete == true,
+      compatibilityFingerprint = recordBuilder.cleanString(summary.compatibilityFingerprint or '', 64),
+      hookCatalogIdentity = recordBuilder.cleanString(summary.hookCatalogIdentity or '', 64),
+      relicCount = {
+        enabled = relicCount.enabled == true,
+        stage = recordBuilder.cleanString(relicCount.stage or '', 64),
+        wrapperValidatedGeneration = tonumber(relicCount.wrapperValidatedGeneration) or -1,
+        baselineCount = tonumber(relicCount.baselineCount),
+        lastCount = tonumber(relicCount.lastCount),
+        localCountIncreaseObserved = relicCount.localCountIncreaseObserved == true,
+        pickupCallbackObserved = false
+      }
+    }
   end
 
   function state:noteHookIo(descriptorId, field, amount)
@@ -410,8 +495,15 @@ function campaignState.new(sessionId, config, catalog)
         gameProcessState = 'running',
         reason = tostring(reason or ''),
         evidenceSequence = self.sequence,
+        activeProfile = self.activeProfile,
+        profileId = self.activeProfile,
+        workflow = self.workflow,
+        currentSamplingCategory = self.currentSamplingCategory,
+        collectionReady = self.collectionReadiness == 'ready' or self.collectionReadiness == 'collecting',
+        collectionReadiness = self.collectionReadiness,
         stability = self.stability,
-        hookIo = self.hookIo
+        hookIo = self.hookIo,
+        research = self.research
       },
       catalog = {
         schemaVersion = tostring(self.catalog.schemaVersion or ''),
@@ -423,7 +515,7 @@ function campaignState.new(sessionId, config, catalog)
         rpcCallsDisabled = self.config.allowRpcProbes ~= true,
         rpcsDisabled = self.config.allowRpcProbes ~= true,
         mutationDisabled = true,
-        hooksDisabled = self.config.allowPassiveObservationHooks ~= true,
+        hooksDisabled = self.config.allowPassiveObservationHooks ~= true and self.config.progressiveHooksArmed ~= true,
         runtimeDiscoveryDisabled = self.config.allowFullObserveRuntimeDiscovery ~= true,
         inventoryStagesDisabled = self.config.allowFullObserveInventoryStages ~= true,
         hudHookDisabled = self.config.allowHudTickHook ~= true,
@@ -442,7 +534,13 @@ function campaignState.new(sessionId, config, catalog)
 
   function state:flushStatus(reason)
     if self.statusWriter == nil then return false end
-    return self.statusWriter:writeSnapshot(self:snapshot(reason))
+    local ok = self.statusWriter:writeSnapshot(self:snapshot(reason))
+    if not ok then
+      self.writeFailureCount = self.writeFailureCount + 1
+      self.evidenceHealth = 'status-write-error'
+      self.dirtyEvidence = true
+    end
+    return ok
   end
 
   return state

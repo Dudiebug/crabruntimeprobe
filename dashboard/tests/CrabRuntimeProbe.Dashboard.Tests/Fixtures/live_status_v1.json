@@ -12,7 +12,7 @@
   "observedRole": "joined-client",
   "authorityStatus": "remote-owned",
   "lifecycle": { "state": "stable", "generation": 2, "world": "Island", "context": "run", "stable": true },
-  "runtime": { "gameProcessRunning": true, "gameProcessState": "running", "ue4ssState": "loaded", "runtimeProbeState": "healthy", "runtimeProbeLoaded": true, "currentProbeStage": "passive-observe" },
+  "runtime": { "gameProcessRunning": true, "gameProcessState": "running", "ue4ssState": "loaded", "runtimeProbeState": "active", "runtimeProbeLoaded": true, "probeStage": "passive-observe", "currentProbeStage": "passive-observe", "activeProfile": "crabsync-full-observe", "collectionReady": true, "stopRequested": false },
   "safety": { "writesDisabled": true, "rpcsDisabled": true, "mutationDisabled": true, "hudHookDisabled": true, "rawIdentityDisabled": true, "hooksDisabled": true, "runtimeDiscoveryDisabled": true, "inventoryStagesDisabled": true, "inventoryDepth": 2, "circuitBreakers": { "inventory": "closed" } },
   "checklist": {},
   "evidenceHealth": { "state": "healthy", "canonicalRows": 4, "rejectedRows": 0, "dirtyRows": 0 },

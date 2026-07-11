@@ -51,7 +51,7 @@ public partial class App : Application
         }
         if (screenshot is not null && screenshotView is null && screenshotViewValue is not null)
         {
-            MessageBox.Show("--screenshot-tab must be play-guide, advanced-overview, checklist, or coverage.", "Invalid screenshot tab",
+            MessageBox.Show("--screenshot-tab must be play-guide, advanced-overview, research, checklist, or coverage.", "Invalid screenshot tab",
                 MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(2);
             return;
@@ -86,6 +86,7 @@ public partial class App : Application
         null or "" => null,
         "play-guide" or "playguide" or "simple" => DashboardScreenshotView.PlayGuide,
         "advanced" or "advanced-overview" or "overview" => DashboardScreenshotView.AdvancedOverview,
+        "advanced-research" or "research" => DashboardScreenshotView.AdvancedResearch,
         "advanced-checklist" or "checklist" => DashboardScreenshotView.AdvancedChecklist,
         "advanced-coverage" or "coverage" => DashboardScreenshotView.AdvancedCoverage,
         _ => null

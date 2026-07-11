@@ -33,6 +33,8 @@ jobs:
         run: |
           node tools/generate_crabsync_coverage_catalog.js --validate
           node tools/generate_crabsync_coverage_catalog.js --self-test
+          node tools/generate_progressive_hook_catalog.js --validate
+          node tools/generate_progressive_hook_catalog.js --self-test
 
       - name: Build dashboard
         shell: pwsh
@@ -46,6 +48,25 @@ jobs:
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-all-tests.ps1
 
+      - name: Build and verify v1.0.4 release layouts
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1 -Version 1.0.4
+          if ($LASTEXITCODE -ne 0) { throw "Canonical v1.0.4 release build failed." }
+          $canonicalExtract = Join-Path $env:RUNNER_TEMP "canonical-release"
+          Expand-Archive -LiteralPath "dist\CrabRuntimeProbe-v1.0.4-win-x64.zip" -DestinationPath $canonicalExtract -Force
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release.ps1 `
+            -BundlePath (Join-Path $canonicalExtract "CrabRuntimeProbe-v1.0.4-win-x64")
+          if ($LASTEXITCODE -ne 0) { throw "Extracted canonical release verification failed." }
+
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-ue4ss-bundle.ps1 `
+            -CrabInvSyncRoot . -Version 1.0.4
+          if ($LASTEXITCODE -ne 0) { throw "UE4SS v1.0.4 release build failed." }
+          $ue4ssExtract = Join-Path $env:RUNNER_TEMP "ue4ss-release"
+          Expand-Archive -LiteralPath "dist\CrabRuntimeProbe-v1.0.4-UE4SS.zip" -DestinationPath $ue4ssExtract -Force
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-ue4ss-bundle.ps1 $ue4ssExtract
+          if ($LASTEXITCODE -ne 0) { throw "Extracted UE4SS release verification failed." }
+
       - name: Render review screenshots
         shell: pwsh
         run: |
@@ -54,6 +75,7 @@ jobs:
           $expectedScreenshots = [ordered]@{
             "dashboard-play-guide.png" = "play-guide"
             "dashboard-play-guide.advanced-overview.png" = "advanced-overview"
+            "dashboard-play-guide.advanced-research.png" = "advanced-research"
             "dashboard-play-guide.advanced-checklist.png" = "checklist"
             "dashboard-play-guide.advanced-needs-coverage.png" = "coverage"
           }
@@ -69,8 +91,8 @@ jobs:
             Sort-Object Name | ForEach-Object Name)
           $expectedNames = @($expectedScreenshots.Keys | Sort-Object)
           $nameDifference = @(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames)
-          if ($actualNames.Count -ne 4 -or $nameDifference.Count -ne 0) {
-            throw "Expected exactly four review screenshots: $($expectedNames -join ', '); got: $($actualNames -join ', ')"
+          if ($actualNames.Count -ne 5 -or $nameDifference.Count -ne 0) {
+            throw "Expected exactly five review screenshots: $($expectedNames -join ', '); got: $($actualNames -join ', ')"
           }
 
           Add-Type -AssemblyName System.Drawing

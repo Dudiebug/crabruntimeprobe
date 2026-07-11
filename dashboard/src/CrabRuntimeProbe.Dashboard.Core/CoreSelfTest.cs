@@ -2,7 +2,7 @@ namespace CrabRuntimeProbe.Dashboard.Core;
 
 public static class CoreSelfTest
 {
-    public static Task<IReadOnlyList<string>> RunAsync()
+    public static async Task<IReadOnlyList<string>> RunAsync()
     {
         var messages = new List<string>();
         var parser = new LiveStatusReader();
@@ -17,7 +17,8 @@ public static class CoreSelfTest
         var redacted = new EvidenceRedactor().Redact("{\"UniqueId\":\"76561198000000000\",\"PlayerName\":\"Dylan\"}");
         Require(!redacted.Contains("76561198000000000", StringComparison.Ordinal)
                 && !redacted.Contains("Dylan", StringComparison.Ordinal), "identity redaction", messages);
-        return Task.FromResult<IReadOnlyList<string>>(messages);
+        messages.AddRange(await ResearchContractSelfTest.RunAsync().ConfigureAwait(false));
+        return messages;
     }
 
     private static void Require(bool condition, string name, ICollection<string> messages)
@@ -44,7 +45,7 @@ public static class DemoStatus
       "observedRole": "host",
       "authorityStatus": "authority",
       "lifecycle": { "state": "stable", "generation": 2, "world": "Island", "context": "run", "stable": true },
-      "runtime": { "gameProcessRunning": true, "gameProcessState": "running", "ue4ssState": "loaded", "runtimeProbeState": "healthy", "runtimeProbeLoaded": true, "currentProbeStage": "passive-observe" },
+      "runtime": { "gameProcessRunning": true, "gameProcessState": "running", "ue4ssState": "loaded", "runtimeProbeState": "active", "runtimeProbeLoaded": true, "probeStage": "passive-observe", "currentProbeStage": "passive-observe", "activeProfile": "crabsync-full-observe", "collectionReady": true, "stopRequested": false },
       "safety": {
         "writesDisabled": true, "rpcsDisabled": true, "mutationDisabled": true,
         "hudHookDisabled": true, "rawIdentityDisabled": true, "hooksDisabled": true,

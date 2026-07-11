@@ -49,13 +49,14 @@ public sealed class PlayGuideReducer
             S("inventory-ability-mod-pickup", "Ability mod"),
             S("inventory-melee-mod-pickup", "Melee mod"),
             S("inventory-perk-pickup", "Perk"),
-            S("inventory-relic-pickup", "Relic")),
+            S("inventory-relic-pickup", "Local relic count increased")),
         A("duplicate", "pickups", 2, "Pick up a duplicate item",
             "Pick up a second copy and, if possible, collect items of different rarities."),
         A("drop-salvage", "pickups", 3, "Drop and salvage items",
             "Drop an item, salvage an offered pickup, and remove different item types when practical."),
         A("inventory-watch", "pickups", 4, "Carry a few items while we check them",
-            "Keep items in all five categories on both players and continue playing together.", true),
+            "Keep items in all five categories on both players and continue playing together.", true,
+            S("transaction-client-picked-up", "Pickup callback observed")),
 
         A("anvil-use", "anvil", 1, "Use an anvil",
             "Upgrade an item while both players are nearby, then keep the upgraded item."),
@@ -122,7 +123,8 @@ public sealed class PlayGuideReducer
     public IReadOnlyList<PlayGuideCategory> Reduce(
         IReadOnlyList<ChecklistViewItem> checklist,
         CampaignRole selectedRole,
-        EvidenceCleanliness cleanliness = EvidenceCleanliness.Clean)
+        EvidenceCleanliness cleanliness = EvidenceCleanliness.Clean,
+        ObservationCapabilityProfile? capabilityProfile = null)
     {
         var grouped = checklist
             .GroupBy(item => Canonicalize(item.Id), StringComparer.OrdinalIgnoreCase)
@@ -132,7 +134,7 @@ public sealed class PlayGuideReducer
         var projected = Actions
             .OrderBy(item => Categories.Single(category => category.Id == item.CategoryId).Order)
             .ThenBy(item => item.Order)
-            .Select(definition => ProjectAction(definition, grouped, selectedRole, cleanliness))
+            .Select(definition => ProjectAction(definition, grouped, selectedRole, cleanliness, capabilityProfile))
             .ToList();
 
         var unmapped = checklist
@@ -144,11 +146,20 @@ public sealed class PlayGuideReducer
         {
             var index = projected.FindIndex(item => item.Id == "other-automatic");
             var current = projected[index];
-            var extras = unmapped.Select((item, itemIndex) => new PlayGuideSubtask(
-                SafeUnmappedLabel(item, itemIndex + 1),
-                cleanliness is EvidenceCleanliness.Dirty or EvidenceCleanliness.CrashSuspect
+            var extras = unmapped.Select((item, itemIndex) =>
+            {
+                var canObserve = capabilityProfile?.CanObserve(Canonicalize(item.Id)) ?? true;
+                var extraState = cleanliness is EvidenceCleanliness.Dirty or EvidenceCleanliness.CrashSuspect
                     ? PlayGuideDisplayState.Retry
-                    : ToDisplayState(SignalFor(new[] { item })))).ToArray();
+                    : ToDisplayState(SignalFor(new[] { item }));
+                if (!canObserve && extraState == PlayGuideDisplayState.ToDo)
+                    extraState = PlayGuideDisplayState.Waiting;
+                return new PlayGuideSubtask(
+                    SafeUnmappedLabel(item, itemIndex + 1),
+                    extraState,
+                    canObserve,
+                    canObserve ? string.Empty : NotObservableExplanation(capabilityProfile!));
+            }).ToArray();
             var state = cleanliness is EvidenceCleanliness.Dirty or EvidenceCleanliness.CrashSuspect
                 ? PlayGuideDisplayState.Retry
                 : AggregateActionState(
@@ -168,10 +179,13 @@ public sealed class PlayGuideReducer
             var actions = projected.Where(action => action.CategoryId == category.Id).ToArray();
             var completed = actions.Count(action => action.IsDone);
             var percentage = actions.Length == 0 ? 0 : Math.Round(completed * 100d / actions.Length);
-            var next = actions.FirstOrDefault(action => !action.IsDone);
-            var recommendation = next is null
-                ? "All tasks in this section are done. Keep playing normally."
-                : $"Next: {next.Title} — {next.Instruction}";
+            var next = actions.FirstOrDefault(action => !action.IsDone && action.CanObserve);
+            var remaining = actions.Any(action => !action.IsDone);
+            var recommendation = next is not null
+                ? $"Next: {next.Title} — {next.Instruction}"
+                : remaining
+                    ? "The remaining actions cannot be detected completely by the active hook-free profile. See each warning for what is not observable."
+                    : "All tasks in this section are done. Keep playing normally.";
             return new PlayGuideCategory(
                 category.Id, category.Name, completed, actions.Length, percentage, recommendation, actions);
         }).ToArray();
@@ -188,7 +202,8 @@ public sealed class PlayGuideReducer
         ActionDefinition definition,
         IReadOnlyDictionary<string, IReadOnlyList<ChecklistViewItem>> grouped,
         CampaignRole selectedRole,
-        EvidenceCleanliness cleanliness)
+        EvidenceCleanliness cleanliness,
+        ObservationCapabilityProfile? capabilityProfile)
     {
         var linkedIds = ChecklistToAction
             .Where(pair => pair.Value == definition.Id)
@@ -201,12 +216,28 @@ public sealed class PlayGuideReducer
         var state = cleanliness is EvidenceCleanliness.Dirty or EvidenceCleanliness.CrashSuspect
             ? PlayGuideDisplayState.Retry
             : AggregateActionState(signals, definition.Automatic);
+        var observableCount = capabilityProfile is null
+            ? requiredIds.Length
+            : requiredIds.Count(capabilityProfile.CanObserve);
+        var canObserve = capabilityProfile is null || observableCount > 0;
+        var fullyObservable = capabilityProfile is null || observableCount == requiredIds.Length;
+        if (!canObserve && state == PlayGuideDisplayState.ToDo)
+            state = PlayGuideDisplayState.Waiting;
         var subtasks = (definition.Subtasks ?? Array.Empty<SubtaskDefinition>())
-            .Select(subtask => new PlayGuideSubtask(
-                subtask.Label,
-                cleanliness is EvidenceCleanliness.Dirty or EvidenceCleanliness.CrashSuspect
+            .Select(subtask =>
+            {
+                var subtaskCanObserve = capabilityProfile?.CanObserve(subtask.ChecklistId) ?? true;
+                var subtaskState = cleanliness is EvidenceCleanliness.Dirty or EvidenceCleanliness.CrashSuspect
                     ? PlayGuideDisplayState.Retry
-                    : ToDisplayState(SignalForId(subtask.ChecklistId, grouped))))
+                    : ToDisplayState(SignalForId(subtask.ChecklistId, grouped));
+                if (!subtaskCanObserve && subtaskState == PlayGuideDisplayState.ToDo)
+                    subtaskState = PlayGuideDisplayState.Waiting;
+                return new PlayGuideSubtask(
+                    subtask.Label,
+                    subtaskState,
+                    subtaskCanObserve,
+                    subtaskCanObserve ? string.Empty : NotObservableExplanation(capabilityProfile!));
+            })
             .ToArray();
         var instruction = mappingWarning
             ? "A required campaign check is missing. Restart the dashboard, then open Advanced if RETRY remains."
@@ -220,8 +251,18 @@ public sealed class PlayGuideReducer
             requiredIds,
             subtasks,
             definition.Automatic,
-            mappingWarning);
+            mappingWarning,
+            canObserve,
+            fullyObservable || capabilityProfile is null
+                ? string.Empty
+                : observableCount == 0
+                    ? NotObservableExplanation(capabilityProfile)
+                    : $"This profile can detect only {observableCount} of {requiredIds.Length} required signals. "
+                      + capabilityProfile.LimitationSummary);
     }
+
+    private static string NotObservableExplanation(ObservationCapabilityProfile profile) =>
+        $"Not observable under {profile.ProfileId}: {profile.LimitationSummary}";
 
     private static IEnumerable<string> RoleAdjusted(IEnumerable<string> ids, CampaignRole role)
     {

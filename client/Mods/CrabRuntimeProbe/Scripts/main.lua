@@ -49,6 +49,25 @@ local DEFAULT_CONFIG = {
   allowPassiveObservationHooks = false,
   allowFullObserveInventoryStages = false,
   allowFullObserveRuntimeDiscovery = false,
+  progressiveObservationEnabled = false,
+  researchRunType = 'combined',
+  researchRunId = 'unassigned',
+  compatibilityFingerprint = 'unassigned',
+  compatibilityGameBuild = 'unknown',
+  compatibilityUe4ssVersion = 'unknown',
+  compatibilityComputedAtUtc = 'unassigned',
+  researchCoverageCatalogHash = 'unassigned',
+  researchHookCatalogIdentity = 'unassigned',
+  researchCallbackImplementationVersion = 'unassigned',
+  researchCallbackSchemaVersion = 'unassigned',
+  researchValidationBehaviorVersion = 'unassigned',
+  trustedCandidateSelections = '',
+  canaryCandidateId = 'unassigned',
+  canaryHookPathFingerprint = 'unassigned',
+  canaryValidationDepth = 0,
+  canaryState = 'untested',
+  relicCountValidationEnabled = false,
+  progressiveHooksArmed = false,
   statusWriterEnabled = false,
   allowWriteProbes = false,
   allowRpcProbes = false,
@@ -171,6 +190,27 @@ end
 local cfg = parseConfig(SCRIPT_DIR .. 'config.txt')
 log('[CrabRuntimeProbe] boot phase: config loaded')
 
+local progressiveSelection = nil
+if cfg.progressiveObservationEnabled == true then
+  local progressiveConfigOk, progressiveConfig = pcall(require, 'progressive_config')
+  if progressiveConfigOk and type(progressiveConfig) == 'table' and type(progressiveConfig.load) == 'function' then
+    local loadOk, selectionOrErr = pcall(progressiveConfig.load, SCRIPT_DIR .. 'config.txt')
+    if loadOk and type(selectionOrErr) == 'table' and selectionOrErr.enabled == true then
+      progressiveSelection = selectionOrErr
+    else
+      cfg.progressiveObservationEnabled = false
+      cfg.progressiveConfigRejectedReason = loadOk and tostring(selectionOrErr and selectionOrErr.reason or 'invalid')
+        or 'progressive-config-loader-error'
+      log('[CrabRuntimeProbe] ERROR: progressive configuration rejected; continuing hook-free: '
+        .. tostring(cfg.progressiveConfigRejectedReason))
+    end
+  else
+    cfg.progressiveObservationEnabled = false
+    cfg.progressiveConfigRejectedReason = 'progressive-config-module-unavailable'
+    log('[CrabRuntimeProbe] ERROR: progressive configuration module unavailable; continuing hook-free')
+  end
+end
+
 if cfg.enabled == false then
   log('[CrabRuntimeProbe] disabled in config')
   return
@@ -246,6 +286,8 @@ log('[CrabRuntimeProbe] safety allowHudTickHook=' .. tostring(cfg.allowHudTickHo
   .. ' allowPassiveObservationHooks=' .. tostring(cfg.allowPassiveObservationHooks)
   .. ' allowFullObserveInventoryStages=' .. tostring(cfg.allowFullObserveInventoryStages)
   .. ' allowFullObserveRuntimeDiscovery=' .. tostring(cfg.allowFullObserveRuntimeDiscovery)
+  .. ' progressiveObservationEnabled=' .. tostring(cfg.progressiveObservationEnabled)
+  .. ' relicCountValidationEnabled=' .. tostring(cfg.relicCountValidationEnabled)
   .. ' statusWriterEnabled=' .. tostring(cfg.statusWriterEnabled)
   .. ' allowWriteProbes=' .. tostring(cfg.allowWriteProbes)
   .. ' allowRpcProbes=' .. tostring(cfg.allowRpcProbes))
@@ -272,19 +314,32 @@ if cfg.tickDriver == 'none' then
 end
 
 local safe = require('safe_access')
-local snapshotCampaign = cfg.fullObserveEnabled == true
+local progressiveCampaign = progressiveSelection ~= nil
+  and cfg.fullObserveEnabled == true
+  and cfg.snapshotSamplerEnabled == true
+  and cfg.probeSet == 'crabsync-full-observe'
+local snapshotCampaign = not progressiveCampaign
+  and cfg.fullObserveEnabled == true
   and cfg.snapshotSamplerEnabled == true
   and cfg.probeSet == 'crabsync-full-observe'
 local state = nil
-if not snapshotCampaign then
+if not snapshotCampaign and not progressiveCampaign then
   local runner = require('probe_runner')
   state = runner.new(cfg, safe, writer, evidenceWriter)
 end
 local fullObserveCoordinator = nil
-if snapshotCampaign then
-  local coordinatorOk, coordinatorFactory = pcall(require, 'full_observe_coordinator')
+if snapshotCampaign or progressiveCampaign then
+  local coordinatorOk = false
+  local coordinatorFactory = nil
+  if progressiveCampaign then
+    coordinatorOk, coordinatorFactory = pcall(require, "progressive_observe_coordinator")
+  else
+    -- Keep this protected literal import stable: the normal-sampler source guard
+    -- proves that default mode cannot drift onto the progressive hook path.
+    coordinatorOk, coordinatorFactory = pcall(require, "full_observe_coordinator")
+  end
   if coordinatorOk and type(coordinatorFactory) == 'table' and type(coordinatorFactory.new) == 'function' then
-    local newOk, coordinatorOrErr = pcall(coordinatorFactory.new, sessionId, cfg, safe, evidenceWriter)
+    local newOk, coordinatorOrErr = pcall(coordinatorFactory.new, sessionId, cfg, safe, evidenceWriter, progressiveSelection)
     if newOk then
       fullObserveCoordinator = coordinatorOrErr
     else
@@ -293,6 +348,10 @@ if snapshotCampaign then
   else
     log('[CrabRuntimeProbe] ERROR: full observe coordinator unavailable: ' .. tostring(coordinatorFactory))
   end
+end
+if (snapshotCampaign or progressiveCampaign) and fullObserveCoordinator == nil then
+  log('[CrabRuntimeProbe] ERROR: snapshot campaign coordinator unavailable; no tick source will be registered')
+  return
 end
 
 local function tickOnce()
@@ -357,6 +416,17 @@ local function registerSelectedTickDriver(driver)
   return true
 end
 
+-- Full-observe safety validation and durable progressive setup must succeed
+-- before any tick source (especially the optional HUD hook) is registered.
+if fullObserveCoordinator then
+  local startOk, startedOrError = pcall(function() return fullObserveCoordinator:start() end)
+  if not startOk or startedOrError ~= true then
+    log('[CrabRuntimeProbe] ERROR: full observe coordinator start rejected: '
+      .. (startOk and 'unsafe-or-incomplete-configuration' or tostring(startedOrError)))
+    return
+  end
+end
+
 local ok, registeredOrError = pcall(function()
   return registerSelectedTickDriver(cfg.tickDriver)
 end)
@@ -369,13 +439,6 @@ end
 if registeredOrError ~= true then
   log('[CrabRuntimeProbe] boot phase: startup complete')
   return
-end
-
-if fullObserveCoordinator then
-  local startOk, startErr = pcall(function() return fullObserveCoordinator:start() end)
-  if not startOk then
-    log('[CrabRuntimeProbe] ERROR: full observe coordinator start failed: ' .. tostring(startErr))
-  end
 end
 
 log('[CrabRuntimeProbe] boot phase: startup complete')

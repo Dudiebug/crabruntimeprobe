@@ -56,10 +56,13 @@ foreach ($forbidden in @(
 }
 
 $main = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'main.lua')
-Assert-Contains $main 'local snapshotCampaign = cfg\.fullObserveEnabled == true' 'Normal snapshot campaign must have an explicit main-path gate.'
+Assert-Contains $main '(?s)local progressiveCampaign = progressiveSelection ~= nil\s+and cfg\.fullObserveEnabled == true\s+and cfg\.snapshotSamplerEnabled == true\s+and cfg\.probeSet == ''crabsync-full-observe''' 'Progressive campaign must require a validated selection and the exact snapshot profile.'
+Assert-Contains $main '(?s)local snapshotCampaign = not progressiveCampaign\s+and cfg\.fullObserveEnabled == true\s+and cfg\.snapshotSamplerEnabled == true\s+and cfg\.probeSet == ''crabsync-full-observe''' 'Normal snapshot campaign must be mutually exclusive with the progressive campaign and retain its exact main-path gates.'
 Assert-Contains $main 'cfg\.snapshotSamplerEnabled == true' 'Normal main path must require the snapshot sampler gate.'
 Assert-Contains $main "cfg\.probeSet == 'crabsync-full-observe'" 'Normal main path must require the exact profile.'
-Assert-Contains $main '(?s)if not snapshotCampaign then\s+local runner = require\(''probe_runner''\)' 'Legacy probe_runner must be unreachable in a normal snapshot campaign.'
+Assert-Contains $main '(?s)if not snapshotCampaign and not progressiveCampaign then\s+local runner = require\(''probe_runner''\)' 'Legacy probe_runner must be unreachable in either snapshot campaign.'
+Assert-Contains $main 'pcall\(require, "full_observe_coordinator"\)' 'Normal snapshot campaign must retain the protected literal hook-free coordinator import.'
+Assert-Contains $main 'pcall\(require, "progressive_observe_coordinator"\)' 'Progressive campaign must use a separate protected literal coordinator import.'
 Assert-Contains $main 'if state then state:onTick\(\) end' 'Normal snapshot ticks must bypass the legacy probe runner.'
 Assert-Contains $main "validFullObserveIdentity\(cfg\)" 'Full observe must fail closed on the complete campaign identity contract.'
 foreach ($identityField in @('campaignId', 'campaignSessionId', 'machineId', 'selectedRole', 'campaignGeneration')) {

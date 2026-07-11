@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "hook-quarantine-v1",
+  "generatedAtUtc": "2026-07-10T23:01:51.893Z",
+  "coverageCatalogHash": "cc6adec3c4450733990c65e6eb0b9173890fbeb5c823c5fb99580580f36976f0",
+  "hookCatalogIdentity": "66f12e0350a57a5e6a6c523f2524f875d4efcb209e25f1dbe92dbe6a1819d985",
+  "callbackImplementationVersion": "progressive-hook-callback-v1",
+  "callbackSchemaVersion": "hook-passive-evidence-v1",
+  "validationBehaviorVersion": "validation-depths-v1",
+  "updatedAtUtc": "2026-07-10T23:01:51.893Z",
+  "entries": []
+}

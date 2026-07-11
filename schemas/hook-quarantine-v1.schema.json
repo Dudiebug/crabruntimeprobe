@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/hook-quarantine-v1.schema.json",
+  "title": "CrabRuntimeProbe hook quarantine and crash-suspect state v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAtUtc", "updatedAtUtc", "coverageCatalogHash", "hookCatalogIdentity", "callbackImplementationVersion", "callbackSchemaVersion", "validationBehaviorVersion", "entries"],
+  "properties": {
+    "schemaVersion": { "const": "hook-quarantine-v1" },
+    "generatedAtUtc": { "type": "string", "format": "date-time" },
+    "updatedAtUtc": { "type": "string", "format": "date-time" },
+    "coverageCatalogHash": { "$ref": "#/$defs/hash" },
+    "hookCatalogIdentity": { "$ref": "#/$defs/hash" },
+    "callbackImplementationVersion": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "callbackSchemaVersion": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "validationBehaviorVersion": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "entries": { "type": "array", "maxItems": 512, "items": { "$ref": "#/$defs/entry" } }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "entry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidateId", "hookPathFingerprint", "validationDepth", "state", "reason", "runId", "quarantinedAtUtc", "explicitRetryRequired", "automaticRearmAllowed"],
+      "properties": {
+        "candidateId": { "type": "string", "pattern": "^hook-[a-z0-9-]{3,120}$", "maxLength": 128 },
+        "hookPathFingerprint": { "$ref": "#/$defs/hash" },
+        "validationDepth": { "type": "integer", "minimum": 1, "maximum": 7 },
+        "state": { "enum": ["quarantined", "crash-suspect"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "runId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "quarantinedAtUtc": { "type": "string", "format": "date-time" },
+        "explicitRetryRequired": { "const": true },
+        "automaticRearmAllowed": { "const": false }
+      }
+    }
+  }
+}

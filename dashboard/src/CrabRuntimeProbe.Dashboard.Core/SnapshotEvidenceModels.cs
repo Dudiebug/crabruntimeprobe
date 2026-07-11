@@ -77,7 +77,8 @@ public sealed record SnapshotObservation(
     IReadOnlyDictionary<string, SnapshotObservedField> Fields,
     SnapshotSafety Safety,
     bool DirtyEvidence,
-    bool CrashSuspected);
+    bool CrashSuspected,
+    string ObservationProfile = "normal-play-guide");
 
 public sealed record SnapshotJsonlRejection(int LineNumber, string Code, string Detail);
 

@@ -12,7 +12,7 @@ public sealed class SnapshotJsonlReader
     {
         "schemaVersion", "recordType", "sessionId", "campaignId", "campaignGeneration", "machineId",
         "sequence", "timestampUtc", "lifecycleGeneration", "context", "selectedRole", "observedRole",
-        "worldFingerprint", "playerStateFingerprint", "category", "stability", "fields", "safety",
+        "observationProfile", "worldFingerprint", "playerStateFingerprint", "category", "stability", "fields", "safety",
         "dirtyEvidence", "crashSuspected"
     };
 
@@ -156,6 +156,11 @@ public sealed class SnapshotJsonlReader
             var selectedRoleText = Text(root, "selectedRole");
             var selectedRole = CampaignRoleNames.Parse(selectedRoleText);
             var observedRole = Text(root, "observedRole");
+            var observationProfile = "normal-play-guide";
+            if (root.TryGetProperty("observationProfile", out var profileElement))
+                observationProfile = profileElement.ValueKind == JsonValueKind.String
+                    ? profileElement.GetString() ?? string.Empty
+                    : string.Empty;
             var hasWorldFingerprint = TryNullableText(root, "worldFingerprint", out var worldFingerprint);
             var hasPlayerStateFingerprint = TryNullableText(
                 root, "playerStateFingerprint", out var playerStateFingerprint);
@@ -164,6 +169,7 @@ public sealed class SnapshotJsonlReader
                 || timestamp is null || lifecycleGeneration < 0 || string.IsNullOrWhiteSpace(context)
                 || context.Length > 64 || !Categories.Contains(category)
                 || selectedRoleText is not ("host" or "joined-client") || selectedRole == CampaignRole.Unknown
+                || observationProfile is not ("normal-play-guide" or "progressive-broad-observation")
                 || !ObservedRoles.Contains(observedRole) || !hasWorldFingerprint || !hasPlayerStateFingerprint
                 || !IsOptionalFingerprint(worldFingerprint) || !IsOptionalFingerprint(playerStateFingerprint))
             {
@@ -205,6 +211,14 @@ public sealed class SnapshotJsonlReader
                 error = Error(
                     "invalid-safety",
                     "Snapshot safety must explicitly report all seven hook-free, read-only safety flags.");
+                return false;
+            }
+            if (observationProfile == "progressive-broad-observation" && hooksDisabled
+                || observationProfile != "progressive-broad-observation" && !hooksDisabled)
+            {
+                error = Error(
+                    "profile-safety-mismatch",
+                    "Snapshot observationProfile and hooksDisabled must truthfully describe the active runtime mode.");
                 return false;
             }
 
@@ -256,7 +270,8 @@ public sealed class SnapshotJsonlReader
                     inventoryStagesDisabled,
                     rawIdentityDisabled),
                 dirtyEvidence,
-                crashSuspected);
+                crashSuspected,
+                observationProfile);
             error = new SnapshotJsonlRejection(0, string.Empty, string.Empty);
             return true;
         }

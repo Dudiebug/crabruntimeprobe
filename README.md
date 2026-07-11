@@ -3,6 +3,11 @@
 CrabRuntimeProbe is a standalone UE4SS Lua diagnostic/research mod for Crab Champions.
 It helps reverse engineer **safe runtime access rules** by combining object dump presence with in-session probe observations.
 
+Current release: **v1.0.4**. See the
+[release notes](docs/CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md),
+[campaign and research guide](docs/CRABSYNC_FULL_CAMPAIGN_GUIDE.md), and
+[changelog](CHANGELOG.md).
+
 ## Why this exists
 
 UE4SS object dumps show what symbols exist, but not when/where access is safe. This project captures runtime facts with paced, breadcrumbed probing.
@@ -46,6 +51,11 @@ For normal use, extract the `CrabRuntimeProbe-v*-win-x64.zip` release and open
 packaged payload, and prepares the read-only campaign without Git, Node, or a
 development SDK.
 
+For v1.0.4, close the game and old dashboard, extract the complete ZIP into a
+new empty folder, and use **Start play guide** once to install the packaged
+payload. Do not merge an old release directory or restore v1.0.2 configuration,
+trusted manifests, or runtime modules. Preserve old evidence ZIPs separately.
+
 The first **Start play guide** run installs the payload and records the current
 dashboard executable for local game-triggered startup. After that one-time
 setup, launching Crab Champions normally from Steam opens the dashboard and
@@ -82,7 +92,7 @@ unsafe HUD fallback that crashed immediately in this Crab Champions/UE4SS setup.
 The source default remains `tickDriver = none`; the first confirmed safe
 diagnostic tick driver for this UE4SS/Crab Champions setup is `executeDelay`.
 
-## Minimal user workflow
+## Normal Play Guide workflow
 
 1. Open the dashboard on both computers.
 2. Leave the dashboard in its default **Play Guide** mode.
@@ -109,6 +119,38 @@ replays those append-only snapshots and qualifies explicit before/after rules.
 Exact-call, argument, replication, persistence, UI-follow-up, inventory-internal,
 and official apply candidates remain visible in **Needs Coverage**; a state
 change is not presented as proof of the exact function that caused it.
+
+The live display must show a fresh heartbeat and increasing sequence, along
+with game unavailable/warming/stable/ready/collecting/stale/stopped/faulted
+state, current sampling category, active profile, and collection readiness.
+Actions unavailable to the safe snapshot profile remain honestly labeled not
+observable instead of looking complete or broken.
+
+## Progressive Broad Observation workflow
+
+Advanced research mode prepares a controlled future launch containing:
+
+```text
+safe snapshot baseline
++ every compatibility-valid trusted hook at its individually validated depth
++ exactly one unvalidated canary registered last
+```
+
+Open **Advanced**, review the recommended candidate/depth and ordinary suggested
+action, explicitly start the research run, play normally, close normally, and
+review its classification. The dashboard can then prepare a repeat, next depth,
+candidate-alone control, quarantine, or return to safe Play Guide for the next
+process launch. It never advances candidates or depths in-process and provides
+no free-form hook path.
+
+v1.0.4 ships with zero trusted hooks and no prearmed canary.
+`OnRep_IslandRewardRarity` at Depth 1 (registration only) is the first
+recommendation, not a default activation. Registration alone never establishes
+trust, crash-suspect/quarantined candidates never auto-rearm, and a compatibility
+change marks prior trust **Needs revalidation**. See the
+[full guide](docs/CRABSYNC_FULL_CAMPAIGN_GUIDE.md) for all eight depths,
+promotion thresholds, attribution limits, recovery, relic-path distinction,
+and the 22-item automated/field verification checklist.
 
 Do not use or resume the v1.0.2 full-observe hook profile. Open the replacement
 dashboard and start/prepare the Play Guide once before launching the game; this
@@ -384,19 +426,23 @@ CrabInvSync template and excludes CrabInvSync gameplay code, servers, raw object
 dumps, runtime logs, `.git`, and `node_modules`.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version 1.0.0
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version 1.0.4
 ```
 
 Build and verify the staging directory without creating a ZIP:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version 1.0.0 -NoZip
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -BundlePath dist\CrabRuntimeProbe-v1.0.0-win-x64
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version 1.0.4 -NoZip
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -BundlePath dist\CrabRuntimeProbe-v1.0.4-win-x64
 ```
 
 The ZIP contains the WPF dashboard, `Payload/` game overlay, campaign/checklist
-and coverage data, schemas, user docs, licenses/attributions, and a relative
-SHA-256 version manifest. The dashboard installs `Payload/` into the selected
+and coverage data, progressive catalog/ledger/trusted/quarantine/default
+artifacts, versioned schemas and runtime modules, user docs,
+licenses/attributions, sanitized build metadata, and a relative SHA-256 version
+manifest. Release verification requires an empty trusted manifest, no prearmed
+canary, safe hook-free defaults, and no raw dumps, local paths, logs, or
+development-only artifacts. The dashboard installs `Payload/` into the selected
 game directory; users do not manually copy the full release there.
 
 ## Exporting the client folder for manual testing

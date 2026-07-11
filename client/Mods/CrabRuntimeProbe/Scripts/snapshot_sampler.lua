@@ -259,7 +259,9 @@ function sampler.new(config, safe, evidenceWriter, state)
     lastSignatures = {},
     lastWrittenAt = {},
     consecutiveErrors = {},
-    disabledCategories = {}
+    disabledCategories = {},
+    baselineObserved = {},
+    baselineReady = false
   }
 
   function o:setActive(active)
@@ -277,6 +279,11 @@ function sampler.new(config, safe, evidenceWriter, state)
     self.lastWrittenAt = {}
     self.consecutiveErrors = {}
     self.disabledCategories = {}
+    self.baselineObserved = {}
+    self.baselineReady = false
+    if type(self.state.setSamplingState) == 'function' then
+      self.state:setSamplingState('', 'warming')
+    end
   end
 
   function o:nextCategory()
@@ -323,6 +330,7 @@ function sampler.new(config, safe, evidenceWriter, state)
       context = self.state.context,
       selectedRole = self.state.selectedRole,
       observedRole = self.state.observedRole,
+      observationProfile = tostring(self.state.activeProfile or 'normal-play-guide'),
       worldFingerprint = self.state.worldFingerprint,
       playerStateFingerprint = self.state.localPlayerStateFingerprint,
       category = definition.id,
@@ -347,12 +355,21 @@ function sampler.new(config, safe, evidenceWriter, state)
         rawIdentityDisabled = true
       }
     }
+    -- Every row from a progressive process is conservatively excluded from
+    -- hook-free Play Guide replay, including the pre-registration baseline.
+    -- Live status separately reports whether hooks are active at this instant.
+    if self.state.activeProfile == 'progressive-broad-observation' then
+      row.safety.hooksDisabled = false
+    end
     local writeOk = type(self.evidenceWriter.writeSnapshotObservation) == 'function'
       and self.evidenceWriter:writeSnapshotObservation(row)
       or false
     self.state:noteWriteResult(writeOk)
-    self.lastSignatures[definition.id] = signature
-    self.lastWrittenAt[definition.id] = now
+    if writeOk then
+      self.lastSignatures[definition.id] = signature
+      self.lastWrittenAt[definition.id] = now
+    end
+    return writeOk
   end
 
   function o:onTick()
@@ -372,6 +389,9 @@ function sampler.new(config, safe, evidenceWriter, state)
 
     local definition = self:nextCategory()
     if definition == nil then return { sampled = false, reason = 'all-categories-disabled' } end
+    if type(self.state.setSamplingState) == 'function' then
+      self.state:setSamplingState(definition.id, self.baselineReady and 'collecting' or 'warming')
+    end
 
     -- Objects are resolved for this single category read and never stored on the sampler.
     local playerState, fingerprint, scopeErr = resolveLocalPlayerState(self.safe)
@@ -412,22 +432,38 @@ function sampler.new(config, safe, evidenceWriter, state)
       or (now - lastWritten) >= self.unchangedHeartbeatSeconds
 
     self.state.probeStage = 'snapshot:' .. definition.id .. ':' .. result
+    local writeOk = true
     if shouldWrite then
-      self:writeObservation(definition, fields, errors, result,
+      writeOk = self:writeObservation(definition, fields, errors, result,
         changeKind == 'unchanged' and 'unchanged-heartbeat' or changeKind, signature, now)
+    end
+    if result ~= 'error' and shouldWrite and writeOk then
+      self.baselineObserved[definition.id] = true
+      local baselineReady = true
+      for _, requiredDefinition in ipairs(CATEGORY_DEFINITIONS) do
+        if self.baselineObserved[requiredDefinition.id] ~= true then baselineReady = false break end
+      end
+      self.baselineReady = baselineReady
+      if type(self.state.setSamplingState) == 'function' then
+        self.state:setSamplingState(definition.id, baselineReady and 'ready' or 'warming')
+      end
     end
     return {
       sampled = true,
       category = definition.id,
       result = result,
       changeKind = changeKind,
-      written = shouldWrite,
+      written = shouldWrite and writeOk,
+      writeSucceeded = writeOk,
       circuitOpen = self.disabledCategories[definition.id] ~= nil
     }
   end
 
   o.CATEGORY_DEFINITIONS = CATEGORY_DEFINITIONS
   o.SNAPSHOT_SCHEMA = SNAPSHOT_SCHEMA
+  function o:isBaselineReady()
+    return self.baselineReady == true
+  end
   return o
 end
 

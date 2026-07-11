@@ -97,54 +97,81 @@ public sealed class EvidenceCollector
 
         var canonicalDirectory = Path.Combine(bundleDirectory, "evidence", "canonical");
         var derivedDirectory = Path.Combine(bundleDirectory, "evidence", "derived-redacted");
+        var researchDirectory = Path.Combine(bundleDirectory, "evidence", "research-redacted");
         var statusOutputDirectory = Path.Combine(bundleDirectory, "evidence", "live-status-redacted");
         var crashDirectory = Path.Combine(bundleDirectory, "crash-metadata");
         var provenanceDirectory = Path.Combine(bundleDirectory, "provenance");
         var omissionDirectory = Path.Combine(bundleDirectory, "omissions");
         foreach (var directory in new[]
                  {
-                     canonicalDirectory, derivedDirectory, statusOutputDirectory, crashDirectory,
+                     canonicalDirectory, derivedDirectory, researchDirectory, statusOutputDirectory, crashDirectory,
                      provenanceDirectory, omissionDirectory
                  })
             Directory.CreateDirectory(directory);
 
         var sourceHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var status = await _statusReader.ReadLatestAsync(state.StatusDirectory, cancellationToken: cancellationToken)
+        var status = await _statusReader.ReadLatestAsync(
+                state.StatusDirectory,
+                scope: StatusReadScope.FromCampaign(state),
+                cancellationToken: cancellationToken)
             .ConfigureAwait(false);
         var copiedEvidence = 0;
         var omitted = new List<string>();
         var dirty = status.Snapshot.DirtyEvidence || status.UsedLastGood || !status.HasSnapshot;
+        var activeProfile = ActiveProfile(status);
+        var progressiveProfile = activeProfile.Equals(
+            "progressive-broad-observation", StringComparison.OrdinalIgnoreCase);
 
-        try
+        if (!progressiveProfile)
         {
-            var snapshotEvidence = await _snapshotEvidenceService.LoadAsync(state, cancellationToken)
-                .ConfigureAwait(false);
-            if (snapshotEvidence.Replay.Rejections.Count > 0)
+            try
             {
-                omitted.Add($"snapshot evidence: {snapshotEvidence.Replay.Rejections.Count} row(s) rejected");
+                var snapshotEvidence = await _snapshotEvidenceService.LoadAsync(state, cancellationToken)
+                    .ConfigureAwait(false);
+                if (snapshotEvidence.Replay.Rejections.Count > 0)
+                {
+                    omitted.Add($"snapshot evidence: {snapshotEvidence.Replay.Rejections.Count} row(s) rejected");
+                    dirty = true;
+                }
+                else
+                {
+                    status = _snapshotEvidenceService.Merge(
+                        status,
+                        snapshotEvidence.Replay,
+                        SnapshotReplayScope.FromCampaign(state));
+                }
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                omitted.Add($"snapshot evidence: unavailable during collection ({ex.Message})");
                 dirty = true;
             }
-            else
-            {
-                status = _snapshotEvidenceService.Merge(
-                    status,
-                    snapshotEvidence.Replay,
-                    SnapshotReplayScope.FromCampaign(state));
-            }
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+
+        DashboardResources? resources = null;
+        try
         {
-            omitted.Add($"snapshot evidence: unavailable during collection ({ex.Message})");
+            resources = _resourceLocator.Locate(resourceStartPath);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            omitted.Add("campaign provenance: packaged/repository campaign resources were not found");
             dirty = true;
         }
 
         var activeRuntimeSession = status.HasSnapshot && !string.IsNullOrWhiteSpace(status.Snapshot.SessionId)
             ? status.Snapshot.SessionId
             : state.SessionId;
-        var bundleSafety = SafetyFrom(status);
-        if (!bundleSafety.AllDisabled)
+        var researchSafety = progressiveProfile
+            ? await ValidateControlledResearchAsync(state, resources, cancellationToken).ConfigureAwait(false)
+            : ResearchSafetyValidation.NotApplicable;
+        var bundleSafety = SafetyFrom(status, researchSafety);
+        var bundleProfileId = progressiveProfile ? "progressive-broad-observation" : "crabsync-full-observe";
+        if (!bundleSafety.IsAcceptableForProfile(bundleProfileId))
         {
-            omitted.Add("safety: current status does not prove all normal-mode hooks and mutation paths disabled");
+            omitted.Add(progressiveProfile
+                ? $"safety: controlled progressive research could not be proven ({researchSafety.Reason})"
+                : "safety: current status does not prove all normal-mode hooks and mutation paths disabled");
             dirty = true;
         }
 
@@ -154,7 +181,8 @@ public sealed class EvidenceCollector
             if (IsCanonicalEvidence(source))
             {
                 var validation = await ValidateCanonicalAsync(
-                    source, state.Generation, activeRuntimeSession, cancellationToken).ConfigureAwait(false);
+                    source, state.Generation, activeRuntimeSession, progressiveProfile &&
+                    bundleSafety.IsAcceptableForProfile(bundleProfileId), cancellationToken).ConfigureAwait(false);
                 if (!validation.Accepted)
                 {
                     omitted.Add($"{Path.GetFileName(source)}: {validation.Reason}");
@@ -170,9 +198,10 @@ public sealed class EvidenceCollector
             }
             else
             {
-                var destinationRoot = Path.GetFileName(source).StartsWith("live_status", StringComparison.OrdinalIgnoreCase)
+                var name = Path.GetFileName(source);
+                var destinationRoot = name.StartsWith("live_status", StringComparison.OrdinalIgnoreCase)
                     ? statusOutputDirectory
-                    : derivedDirectory;
+                    : IsResearchArtifact(name) ? researchDirectory : derivedDirectory;
                 var destination = UniqueFile(Path.Combine(destinationRoot, Path.GetFileName(source)));
                 if (await CopyRedactedAsync(source, destination, cancellationToken).ConfigureAwait(false))
                 {
@@ -212,17 +241,6 @@ public sealed class EvidenceCollector
             var metadata = await WriteCrashMetadataAsync(source, crashDirectory, cancellationToken).ConfigureAwait(false);
             sourceHashes[Relative(bundleDirectory, metadata)] = await Sha256Async(source, cancellationToken)
                 .ConfigureAwait(false);
-        }
-
-        DashboardResources? resources = null;
-        try
-        {
-            resources = _resourceLocator.Locate(resourceStartPath);
-        }
-        catch (DirectoryNotFoundException)
-        {
-            omitted.Add("campaign provenance: packaged/repository campaign resources were not found");
-            dirty = true;
         }
 
         var provenance = resources is null
@@ -293,7 +311,7 @@ public sealed class EvidenceCollector
             "crabruntimeprobe-evidence-bundle-v1",
             state.CampaignId,
             state.CampaignName,
-            string.IsNullOrWhiteSpace(provenance.ProfileId) ? "unknown" : provenance.ProfileId,
+            bundleProfileId,
             state.Generation,
             state.MachineId,
             activeRuntimeSession,
@@ -330,7 +348,12 @@ public sealed class EvidenceCollector
                 .Where(path =>
                     Path.GetFileName(path).Equals("crabsync_coverage_catalog.json", StringComparison.OrdinalIgnoreCase)
                     || Path.GetFileName(path).Contains("full-observe", StringComparison.OrdinalIgnoreCase)
-                    || Path.GetFileName(path).Contains("campaign_plan", StringComparison.OrdinalIgnoreCase))
+                    || Path.GetFileName(path).Contains("campaign_plan", StringComparison.OrdinalIgnoreCase)
+                    || Path.GetFileName(path).Equals("hook_candidate_catalog.json", StringComparison.OrdinalIgnoreCase)
+                    || Path.GetFileName(path).Equals("hook_validation_ledger.json", StringComparison.OrdinalIgnoreCase)
+                    || Path.GetFileName(path).Equals("trusted_hook_manifest.json", StringComparison.OrdinalIgnoreCase)
+                    || Path.GetFileName(path).Equals("hook_quarantine.json", StringComparison.OrdinalIgnoreCase)
+                    || Path.GetFileName(path).Equals("progressive_observation.defaults.json", StringComparison.OrdinalIgnoreCase))
                 .Where(path => Path.GetExtension(path).Equals(".json", StringComparison.OrdinalIgnoreCase))
                 .ToArray()
             : Array.Empty<string>();
@@ -409,10 +432,216 @@ public sealed class EvidenceCollector
         && value.ValueKind is JsonValueKind.True or JsonValueKind.False
         && value.GetBoolean() == expected;
 
+    private static string ActiveProfile(LiveStatusReadResult status)
+    {
+        if (!status.HasSnapshot) return string.Empty;
+        if (!string.IsNullOrWhiteSpace(status.Snapshot.Runtime.ActiveProfile))
+            return status.Snapshot.Runtime.ActiveProfile.Trim();
+        return status.Snapshot.CampaignId.Trim();
+    }
+
+    private static bool IsResearchArtifact(string name) =>
+        name.StartsWith("hook_run_manifest_", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("hook_run_consumed_", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("hook_breadcrumbs_", StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith("hook_run_classification_", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("hook_validation_ledger.json", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("trusted_hook_manifest.json", StringComparison.OrdinalIgnoreCase)
+        || name.Equals("hook_quarantine.json", StringComparison.OrdinalIgnoreCase);
+
+    private async Task<ResearchSafetyValidation> ValidateControlledResearchAsync(
+        LocalCampaignState state,
+        DashboardResources? resources,
+        CancellationToken cancellationToken)
+    {
+        if (resources is null)
+            return ResearchSafetyValidation.Failed("candidate catalog resources are unavailable");
+        if (!Directory.Exists(state.StatusDirectory))
+            return ResearchSafetyValidation.Failed("research results directory is unavailable");
+
+        try
+        {
+            var artifacts = new ResearchArtifactStore();
+            var matching = new List<(string Path, HookRunManifest Manifest)>();
+            foreach (var path in Directory.EnumerateFiles(
+                         state.StatusDirectory, "hook_run_manifest_*.json", SearchOption.TopDirectoryOnly))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                HookRunManifest parsedManifest;
+                try
+                {
+                    parsedManifest = await artifacts.ReadRunManifestAsync(path, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+                                           or ResearchSchemaException)
+                {
+                    continue;
+                }
+                if (parsedManifest.SessionId.Equals(state.SessionId, StringComparison.Ordinal)
+                    && parsedManifest.CampaignGeneration == state.Generation
+                    && parsedManifest.SelectedRole == state.Role)
+                    matching.Add((path, parsedManifest));
+            }
+
+            if (matching.Count != 1)
+                return ResearchSafetyValidation.Failed(
+                    matching.Count == 0
+                        ? "no strict run manifest matches this campaign generation"
+                        : "multiple run manifests match this campaign generation");
+
+            var (manifestPath, manifest) = matching[0];
+            if (!Path.GetFileName(manifestPath).Equals(
+                    $"hook_run_manifest_{manifest.RunId}.json", StringComparison.OrdinalIgnoreCase))
+                return ResearchSafetyValidation.Failed("run-manifest filename does not match its immutable run ID");
+            if (manifest.CreatedAtUtc < state.PreparedAtUtc.AddMinutes(-5)
+                || manifest.CreatedAtUtc > DateTimeOffset.UtcNow.AddMinutes(5))
+                return ResearchSafetyValidation.Failed("run-manifest time is outside the prepared campaign interval");
+            var consumedMarkerValid = await ValidateConsumptionMarkerAsync(
+                state.StatusDirectory, manifest, cancellationToken).ConfigureAwait(false);
+
+            var catalog = await artifacts.ReadCatalogAsync(
+                Path.Combine(resources.CampaignRoot, "hook_candidate_catalog.json"), cancellationToken)
+                .ConfigureAwait(false);
+            var depthEnforced = ValidateResearchRegistrationShape(manifest, catalog, out var shapeReason);
+            var componentFingerprint = new CompatibilityFingerprintService().Compute(
+                manifest.Compatibility.GameBuild,
+                manifest.Compatibility.Ue4ssVersion,
+                catalog,
+                manifest.Compatibility.ComputedAtUtc);
+            var compatibilityValidated = manifest.Compatibility.IsComplete
+                                         && manifest.Compatibility.CoverageCatalogHash == catalog.CoverageCatalogHash
+                                         && manifest.Compatibility.HookCatalogIdentity == catalog.HookCatalogIdentity
+                                         && manifest.Compatibility.CallbackImplementationVersion == catalog.CallbackImplementationVersion
+                                         && manifest.Compatibility.CallbackSchemaVersion == catalog.CallbackSchemaVersion
+                                         && manifest.Compatibility.ValidationBehaviorVersion == catalog.ValidationBehaviorVersion
+                                         && componentFingerprint.Fingerprint == manifest.Compatibility.Fingerprint;
+            if (compatibilityValidated)
+            {
+                var gameBinary = ResolveGameBinaryDirectory(state);
+                var current = await new CompatibilityFingerprintService().FromInstallationAsync(
+                    state.ExecutablePath,
+                    Path.Combine(gameBinary, "UE4SS.dll"),
+                    catalog,
+                    cancellationToken).ConfigureAwait(false);
+                compatibilityValidated = current.IsComplete
+                                         && current.Fingerprint == manifest.Compatibility.Fingerprint;
+            }
+
+            var canaries = manifest.Canary is null ? 0 : 1;
+            var reasonParts = new List<string>();
+            if (!consumedMarkerValid) reasonParts.Add("the atomic single-process consumption marker is absent or invalid");
+            if (!compatibilityValidated) reasonParts.Add("compatibility fingerprint no longer matches the installed game, UE4SS, or catalog");
+            if (!depthEnforced) reasonParts.Add(shapeReason);
+            return new ResearchSafetyValidation(
+                consumedMarkerValid,
+                compatibilityValidated,
+                depthEnforced,
+                canaries,
+                reasonParts.Count == 0 ? "strict run manifest and current compatibility validated" : string.Join("; ", reasonParts));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+                                   or ResearchSchemaException or InvalidDataException)
+        {
+            return ResearchSafetyValidation.Failed($"research artifact validation failed: {ex.Message}");
+        }
+    }
+
+    private static async Task<bool> ValidateConsumptionMarkerAsync(
+        string statusDirectory,
+        HookRunManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        var path = Path.Combine(statusDirectory, $"hook_run_consumed_{manifest.RunId}.json");
+        if (!File.Exists(path) || new FileInfo(path).Length is <= 1 or > 4096) return false;
+        try
+        {
+            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+                4096, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            var root = document.RootElement;
+            HookCandidateCatalogReader.RequireProperties(root, "run consumption marker",
+                "schemaVersion", "runId", "consumedAtUtc", "automaticRearmAllowed");
+            var consumedAt = HookCandidateCatalogReader.RequiredDate(root, "consumedAtUtc");
+            return HookCandidateCatalogReader.RequiredString(root, "schemaVersion", 96)
+                       == ResearchContracts.RunConsumedSchema
+                   && HookCandidateCatalogReader.RequiredString(root, "runId", 128) == manifest.RunId
+                   && !HookCandidateCatalogReader.RequiredBool(root, "automaticRearmAllowed")
+                   && consumedAt >= manifest.CreatedAtUtc.AddMinutes(-1)
+                   && consumedAt <= DateTimeOffset.UtcNow.AddMinutes(5);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException
+                                   or ResearchSchemaException)
+        {
+            return false;
+        }
+    }
+
+    private static bool ValidateResearchRegistrationShape(
+        HookRunManifest manifest,
+        HookCandidateCatalog catalog,
+        out string reason)
+    {
+        var trustedIds = new HashSet<string>(StringComparer.Ordinal);
+        var trusted = new List<HookCandidateDefinition>();
+        foreach (var selection in manifest.TrustedCandidates)
+        {
+            if (!trustedIds.Add(selection.CandidateId)
+                || !catalog.ById.TryGetValue(selection.CandidateId, out var candidate)
+                || candidate.HookPathFingerprint != selection.HookPathFingerprint
+                || selection.ValidationDepth is <= HookValidationDepth.StaticCatalogValidation
+                    or > HookValidationDepth.FullPassiveEvidence
+                || selection.ValidationDepth > candidate.MaximumValidationDepth)
+            {
+                reason = $"trusted selection '{selection.CandidateId}' is duplicated, unknown, mismatched, or over-depth";
+                return false;
+            }
+            trusted.Add(candidate);
+        }
+
+        if (manifest.RunType == ResearchRunType.CanaryOnly && manifest.TrustedCandidates.Count != 0)
+        {
+            reason = "canary-only run contains trusted-pool registrations";
+            return false;
+        }
+
+        if (manifest.Canary is { } canary)
+        {
+            if (trustedIds.Contains(canary.CandidateId)
+                || !catalog.ById.TryGetValue(canary.CandidateId, out var candidate)
+                || candidate.HookPathFingerprint != canary.HookPathFingerprint
+                || canary.ValidationDepth is <= HookValidationDepth.StaticCatalogValidation
+                    or > HookValidationDepth.FullPassiveEvidence
+                || canary.ValidationDepth > candidate.MaximumValidationDepth)
+            {
+                reason = "canary is duplicated, unknown, mismatched, or over-depth";
+                return false;
+            }
+        }
+
+        var orderedTrusted = trusted
+            .OrderBy(candidate => candidate.OwnerKind == "blueprint" ? 1 : 0)
+            .ThenBy(candidate => candidate.Priority)
+            .ThenBy(candidate => candidate.Id, StringComparer.Ordinal)
+            .Select(candidate => candidate.Id);
+        var expectedOrder = new List<string> { "safe-snapshot-baseline" };
+        expectedOrder.AddRange(orderedTrusted);
+        if (manifest.Canary is not null) expectedOrder.Add(manifest.Canary.CandidateId);
+        if (!manifest.RegistrationOrder.SequenceEqual(expectedOrder, StringComparer.Ordinal))
+        {
+            reason = "registration order is not baseline, deterministic trusted pool, then canary last";
+            return false;
+        }
+
+        reason = string.Empty;
+        return true;
+    }
+
     private async Task<CanonicalValidation> ValidateCanonicalAsync(
         string source,
         long expectedGeneration,
         string activeSession,
+        bool allowControlledHooks,
         CancellationToken cancellationToken)
     {
         var info = new FileInfo(source);
@@ -432,7 +661,7 @@ public sealed class EvidenceCollector
                 foreach (var document in objects)
                 {
                     var root = document.RootElement;
-                    if (ContainsUnsafeFlag(root))
+                    if (ContainsUnsafeFlag(root, allowControlledHooks))
                         return new CanonicalValidation(
                             false,
                             false,
@@ -458,7 +687,7 @@ public sealed class EvidenceCollector
         return new CanonicalValidation(true, false, string.Empty);
     }
 
-    private static bool ContainsUnsafeFlag(JsonElement element)
+    private static bool ContainsUnsafeFlag(JsonElement element, bool allowControlledHooks)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
@@ -467,26 +696,29 @@ public sealed class EvidenceCollector
                 var normalized = property.Name.Replace("_", string.Empty, StringComparison.Ordinal)
                     .Replace("-", string.Empty, StringComparison.Ordinal).ToLowerInvariant();
                 if (property.Value.ValueKind == JsonValueKind.True
-                    && normalized is "allowwriteprobes" or "allowrpcprobes" or "allowhudtickhook"
+                    && (normalized is "allowwriteprobes" or "allowrpcprobes" or "allowhudtickhook"
                         or "allowrawidentityevidence" or "writesenabled" or "rpcinvocationenabled"
                         or "propertymutationenabled" or "hudhookenabled" or "rawidentityenabled"
-                        or "allowpassiveobservationhooks" or "allowfullobserveruntimediscovery"
-                        or "allowfullobserveinventorystages" or "hooksenabled" or "gameplayhooksenabled"
-                        or "lifecyclehooksenabled" or "runtimediscoveryenabled" or "inventorystagesenabled"
-                        or "inventoryescalationenabled")
+                        or "allowfullobserveruntimediscovery" or "allowfullobserveinventorystages"
+                        or "runtimediscoveryenabled" or "inventorystagesenabled" or "inventoryescalationenabled"
+                        || !allowControlledHooks && normalized is "allowpassiveobservationhooks" or "hooksenabled"
+                            or "gameplayhooksenabled" or "lifecyclehooksenabled"
+                            or "progressiveobservationenabled" or "progressivehooksarmed"
+                            or "reliccountvalidationenabled"))
                     return true;
                 if (property.Value.ValueKind == JsonValueKind.False
-                    && normalized is "writesdisabled" or "rpccallsdisabled" or "rpcsdisabled"
+                    && (normalized is "writesdisabled" or "rpccallsdisabled" or "rpcsdisabled"
                         or "mutationdisabled" or "hudhookdisabled" or "rawidentitydisabled"
-                        or "hooksdisabled" or "runtimediscoverydisabled" or "inventorystagesdisabled")
+                        or "runtimediscoverydisabled" or "inventorystagesdisabled"
+                        || !allowControlledHooks && normalized == "hooksdisabled"))
                     return true;
-                if (ContainsUnsafeFlag(property.Value)) return true;
+                if (ContainsUnsafeFlag(property.Value, allowControlledHooks)) return true;
             }
         }
         else if (element.ValueKind == JsonValueKind.Array)
         {
             foreach (var item in element.EnumerateArray())
-                if (ContainsUnsafeFlag(item)) return true;
+                if (ContainsUnsafeFlag(item, allowControlledHooks)) return true;
         }
         return false;
     }
@@ -522,6 +754,13 @@ public sealed class EvidenceCollector
                 if (name.StartsWith("access_evidence_", StringComparison.OrdinalIgnoreCase)
                     || name.StartsWith("probe_results_", StringComparison.OrdinalIgnoreCase)
                     || name.StartsWith("session_manifest_", StringComparison.OrdinalIgnoreCase)
+                    || name.StartsWith("hook_run_manifest_", StringComparison.OrdinalIgnoreCase)
+                    || name.StartsWith("hook_run_consumed_", StringComparison.OrdinalIgnoreCase)
+                    || name.StartsWith("hook_breadcrumbs_", StringComparison.OrdinalIgnoreCase)
+                    || name.StartsWith("hook_run_classification_", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("hook_validation_ledger.json", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("trusted_hook_manifest.json", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("hook_quarantine.json", StringComparison.OrdinalIgnoreCase)
                     || name.StartsWith("live_status", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("full_observe_progress.txt", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("full_observe_sequence.txt", StringComparison.OrdinalIgnoreCase)
@@ -689,10 +928,13 @@ public sealed class EvidenceCollector
         return builder.ToString();
     }
 
-    private static BundleSafety SafetyFrom(LiveStatusReadResult status)
+    private static BundleSafety SafetyFrom(
+        LiveStatusReadResult status,
+        ResearchSafetyValidation research)
     {
         if (!status.HasSnapshot)
-            return new BundleSafety(false, false, false, false, false, false, false, false);
+            return new BundleSafety(false, false, false, false, false, false, false, false,
+                false, false, false, 0);
         var safety = status.Snapshot.Safety;
         return new BundleSafety(
             safety.WritesDisabled,
@@ -702,7 +944,11 @@ public sealed class EvidenceCollector
             safety.HudHookDisabled,
             safety.HooksDisabled,
             safety.RuntimeDiscoveryDisabled,
-            safety.InventoryStagesDisabled);
+            safety.InventoryStagesDisabled,
+            research.ControlledResearchHooks,
+            research.CompatibilityValidated,
+            research.TrustedDepthEnforced,
+            research.ActiveCanaries);
     }
 
     private static string RenderDiagnosticSummary(
@@ -730,6 +976,10 @@ public sealed class EvidenceCollector
         builder.AppendLine($"runtimeDiscoveryDisabled={safety.RuntimeDiscoveryDisabled.ToString().ToLowerInvariant()}");
         builder.AppendLine($"inventoryStagesDisabled={safety.InventoryStagesDisabled.ToString().ToLowerInvariant()}");
         builder.AppendLine($"mutationDisabled={safety.MutationDisabled.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"controlledResearchHooks={safety.ControlledResearchHooks.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"compatibilityValidated={safety.CompatibilityValidated.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"trustedDepthEnforced={safety.TrustedDepthEnforced.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"activeCanaries={safety.ActiveCanaries}");
         builder.AppendLine("passiveCampaignIsNotWriteApplyProof=true");
         foreach (var item in readiness)
             builder.AppendLine($"capability.{SafeName(item.Category)}={(item.Complete ? "complete" : "incomplete")}");
@@ -773,6 +1023,20 @@ public sealed class EvidenceCollector
     }
 
     private sealed record CanonicalValidation(bool Accepted, bool UnrelatedSession, string Reason);
+    private sealed record ResearchSafetyValidation(
+        bool ControlledResearchHooks,
+        bool CompatibilityValidated,
+        bool TrustedDepthEnforced,
+        int ActiveCanaries,
+        string Reason)
+    {
+        public static ResearchSafetyValidation NotApplicable { get; } = new(
+            false, false, false, 0, "normal hook-free profile");
+
+        public static ResearchSafetyValidation Failed(string reason) => new(
+            false, false, false, 0, reason);
+    }
+
     private sealed record ProvenanceResult(
         string CatalogPath,
         string ProfileId,
@@ -811,8 +1075,11 @@ public sealed class BundleCorrelationService
                 var manifestPath = Directory.EnumerateFiles(extraction, "bundle_manifest.json", SearchOption.AllDirectories)
                     .SingleOrDefault() ?? throw new InvalidDataException($"Bundle must contain exactly one manifest: {zipPaths[index]}");
                 await using var stream = File.OpenRead(manifestPath);
-                var manifest = await JsonSerializer.DeserializeAsync<BundleManifest>(stream, JsonOptions, cancellationToken)
-                    .ConfigureAwait(false) ?? throw new InvalidDataException($"Bundle manifest is invalid: {zipPaths[index]}");
+                using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
+                    .ConfigureAwait(false);
+                ValidateManifestShape(document.RootElement);
+                var manifest = document.RootElement.Deserialize<BundleManifest>(JsonOptions)
+                               ?? throw new InvalidDataException($"Bundle manifest is invalid: {zipPaths[index]}");
                 var bundleRoot = Path.GetDirectoryName(manifestPath)!;
                 await ValidateManifestAsync(manifest, bundleRoot, cancellationToken).ConfigureAwait(false);
                 validated.Add(new ValidatedBundle(Path.GetFullPath(zipPaths[index]), bundleRoot, manifest));
@@ -913,11 +1180,11 @@ public sealed class BundleCorrelationService
             throw new InvalidDataException("Manifest selectedRole is invalid.");
         if (manifest.PreparedAtUtc > manifest.CollectedAtUtc)
             throw new InvalidDataException("Manifest capture interval is inverted.");
-        if (!manifest.ProfileId.Equals("crabsync-full-observe", StringComparison.OrdinalIgnoreCase)
+        if (manifest.ProfileId is not ("crabsync-full-observe" or "progressive-broad-observation")
             || !IsSha256(manifest.CatalogHash))
             throw new InvalidDataException("Manifest profile/catalog identity is invalid.");
         if (!manifest.ManifestSelfExcluded) throw new InvalidDataException("Manifest must declare its self-exclusion.");
-        if (manifest.Safety is null || !manifest.Safety.AllDisabled)
+        if (manifest.Safety is null || !manifest.Safety.IsAcceptableForProfile(manifest.ProfileId))
             throw new InvalidDataException("Bundle safety contract is absent or permits an unsafe operation.");
         if (manifest.Files is null) throw new InvalidDataException("Manifest has no file inventory.");
         var expected = manifest.Files.ToDictionary(item => NormalizeRelative(item.Path), StringComparer.OrdinalIgnoreCase);
@@ -941,6 +1208,28 @@ public sealed class BundleCorrelationService
             if (!hash.Equals(entry.Hash, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException($"SHA-256 mismatch: {pair.Key}");
         }
+    }
+
+    private static void ValidateManifestShape(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("safety", out var safety)
+            || safety.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Bundle manifest safety object is missing.");
+        foreach (var name in new[]
+                 {
+                     "writesDisabled", "rpcCallsDisabled", "mutationDisabled", "rawIdentityDisabled",
+                     "hudHookDisabled", "hooksDisabled", "runtimeDiscoveryDisabled", "inventoryStagesDisabled",
+                     "controlledResearchHooks", "compatibilityValidated", "trustedDepthEnforced"
+                 })
+            if (!safety.TryGetProperty(name, out var value)
+                || value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw new InvalidDataException($"Bundle safety field '{name}' is missing or invalid.");
+        if (!safety.TryGetProperty("activeCanaries", out var canaries)
+            || canaries.ValueKind != JsonValueKind.Number
+            || !canaries.TryGetInt32(out var count)
+            || count is < 0 or > 1)
+            throw new InvalidDataException("Bundle safety field 'activeCanaries' is missing or invalid.");
     }
 
     private static string NormalizeRelative(string path)

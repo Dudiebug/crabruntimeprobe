@@ -15,10 +15,13 @@ public sealed class LiveStatusReader
 {
     public const int SupportedSchemaMajor = 1;
     private const int MaximumStatusBytes = 4 * 1024 * 1024;
+    private const int MaximumCachedScopes = 8;
+    private static readonly TimeSpan MaximumFutureClockSkew = TimeSpan.FromSeconds(5);
     private readonly object _sync = new();
-    private readonly Queue<LiveStatusSnapshot> _history = new();
+    private readonly Dictionary<StatusScopeKey, ScopeCache> _scopeCaches = new();
+    private readonly Queue<StatusScopeKey> _scopeOrder = new();
     private readonly int _historyCapacity;
-    private LiveStatusSnapshot? _lastGood;
+    private StatusScopeKey? _lastScope;
 
     public LiveStatusReader(int historyCapacity = 64)
     {
@@ -36,7 +39,9 @@ public sealed class LiveStatusReader
         {
             lock (_sync)
             {
-                return _history.ToArray();
+                return _lastScope is { } scope && _scopeCaches.TryGetValue(scope, out var cache)
+                    ? cache.History.ToArray()
+                    : Array.Empty<LiveStatusSnapshot>();
             }
         }
     }
@@ -45,13 +50,14 @@ public sealed class LiveStatusReader
         string statusDirectory,
         DateTimeOffset? nowUtc = null,
         TimeSpan? staleAfter = null,
+        StatusReadScope? scope = null,
         CancellationToken cancellationToken = default)
     {
         var now = nowUtc ?? DateTimeOffset.UtcNow;
         var staleWindow = staleAfter ?? TimeSpan.FromSeconds(8);
         if (!Directory.Exists(statusDirectory))
         {
-            return LastGoodResult(now, staleWindow, $"Status directory not found: {statusDirectory}");
+            return LastGoodResult(now, staleWindow, $"Status directory not found: {statusDirectory}", scope);
         }
 
         var candidates = Directory.EnumerateFiles(statusDirectory, "live_status.slot*.json", SearchOption.TopDirectoryOnly)
@@ -63,7 +69,7 @@ public sealed class LiveStatusReader
 
         if (candidates.Length == 0)
         {
-            return LastGoodResult(now, staleWindow, "No completed live-status snapshots are available yet.");
+            return LastGoodResult(now, staleWindow, "No completed live-status snapshots are available yet.", scope);
         }
 
         var valid = new List<LiveStatusSnapshot>();
@@ -73,7 +79,13 @@ public sealed class LiveStatusReader
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                valid.Add(await ParseFileAsync(file, cancellationToken).ConfigureAwait(false));
+                var parsed = await ParseFileAsync(file, cancellationToken).ConfigureAwait(false);
+                if (scope is not null && !scope.Matches(parsed))
+                {
+                    errors.Add($"{Path.GetFileName(file)}: snapshot belongs to a different campaign scope");
+                    continue;
+                }
+                valid.Add(parsed);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or StatusSchemaException)
             {
@@ -83,7 +95,7 @@ public sealed class LiveStatusReader
 
         if (valid.Count == 0)
         {
-            return LastGoodResult(now, staleWindow, string.Join(" | ", errors));
+            return LastGoodResult(now, staleWindow, string.Join(" | ", errors), scope);
         }
 
         var newest = valid
@@ -91,15 +103,17 @@ public sealed class LiveStatusReader
             .ThenByDescending(snapshot => snapshot.WrittenAtUtc)
             .First();
 
+        var previousSequence = PreviousSequence(newest);
         Remember(newest);
-        var stale = now - newest.HeartbeatAtUtc > staleWindow;
+        var stale = IsStale(now, newest.HeartbeatAtUtc, staleWindow);
         return new LiveStatusReadResult(
             newest,
             true,
             stale,
             false,
             errors.Count == 0 ? string.Empty : string.Join(" | ", errors),
-            now);
+            now,
+            previousSequence);
     }
 
     public async Task<LiveStatusSnapshot> ParseFileAsync(
@@ -162,7 +176,12 @@ public sealed class LiveStatusReader
             String(lifecycleElement, "world", String(lifecycleElement, "worldName", string.Empty)),
             String(lifecycleElement, "context", string.Empty),
             Bool(lifecycleElement, "stable", false),
-            Date(lifecycleElement, "changedAtUtc"));
+            Date(lifecycleElement, "changedAtUtc"),
+            Int(lifecycleElement, "stableSamples", 0),
+            Int(lifecycleElement, "stableSamplesRequired", 0),
+            Number(lifecycleElement, "stableDwellSeconds", 0),
+            Number(lifecycleElement, "stableDwellSecondsRequired", 0),
+            String(lifecycleElement, "stabilityResetReason", String(lifecycleElement, "resetReason", string.Empty)));
 
         var runtimeElement = Object(root, "runtime");
         var gameState = String(runtimeElement, "gameProcessState", String(runtimeElement, "gameState", "unknown"));
@@ -174,7 +193,17 @@ public sealed class LiveStatusReader
             Bool(runtimeElement, "runtimeProbeLoaded", false),
             String(runtimeElement, "currentProbeStage",
                 String(runtimeElement, "probeStage", String(root, "currentProbeStage", "idle"))),
-            NullableInt(runtimeElement, "gameProcessId"));
+            NullableInt(runtimeElement, "gameProcessId"),
+            String(runtimeElement, "activeProfile",
+                String(runtimeElement, "profileId",
+                    String(root, "activeProfile", String(root, "profileId", String(root, "campaignId", string.Empty))))),
+            String(runtimeElement, "currentSamplingCategory",
+                String(runtimeElement, "samplingCategory", String(root, "currentSamplingCategory", string.Empty))),
+            NullableBool(runtimeElement, "collectionReady")
+                ?? NullableBool(root, "collectionReady")
+                ?? NullableBool(lifecycleElement, "stabilityReady"),
+            Bool(runtimeElement, "stopRequested", false),
+            Long(runtimeElement, "evidenceSequence", 0));
 
         var safetyElement = Object(root, "safety");
         var breakers = ParseCircuitBreakers(Object(safetyElement, "circuitBreakers"));
@@ -300,22 +329,37 @@ public sealed class LiveStatusReader
         return new ReadOnlyDictionary<string, string>(output);
     }
 
-    private LiveStatusReadResult LastGoodResult(DateTimeOffset now, TimeSpan staleAfter, string error)
+    private LiveStatusReadResult LastGoodResult(
+        DateTimeOffset now,
+        TimeSpan staleAfter,
+        string error,
+        StatusReadScope? requestedScope)
     {
         lock (_sync)
         {
-            if (_lastGood is null)
+            var key = requestedScope is null ? _lastScope : StatusScopeKey.From(requestedScope);
+            if (key is null || !_scopeCaches.TryGetValue(key.Value, out var cache) || cache.LastGood is null)
             {
                 return new LiveStatusReadResult(LiveStatusSnapshot.Empty, false, true, false, error, now);
             }
 
             return new LiveStatusReadResult(
-                _lastGood,
+                cache.LastGood,
                 true,
-                now - _lastGood.HeartbeatAtUtc > staleAfter,
+                IsStale(now, cache.LastGood.HeartbeatAtUtc, staleAfter),
                 true,
                 error,
-                now);
+                now,
+                cache.LastGood.Sequence);
+        }
+    }
+
+    private long? PreviousSequence(LiveStatusSnapshot snapshot)
+    {
+        lock (_sync)
+        {
+            var key = StatusScopeKey.From(snapshot);
+            return _scopeCaches.TryGetValue(key, out var cache) ? cache.LastGood?.Sequence : null;
         }
     }
 
@@ -323,21 +367,65 @@ public sealed class LiveStatusReader
     {
         lock (_sync)
         {
-            if (_lastGood is not null && snapshot.Sequence < _lastGood.Sequence)
+            var key = StatusScopeKey.From(snapshot);
+            if (!_scopeCaches.TryGetValue(key, out var cache))
+            {
+                cache = new ScopeCache();
+                _scopeCaches[key] = cache;
+                _scopeOrder.Enqueue(key);
+                while (_scopeOrder.Count > MaximumCachedScopes)
+                {
+                    var expired = _scopeOrder.Dequeue();
+                    _scopeCaches.Remove(expired);
+                }
+            }
+            _lastScope = key;
+            if (cache.LastGood is not null && snapshot.Sequence < cache.LastGood.Sequence)
             {
                 return;
             }
 
-            _lastGood = snapshot;
-            if (_history.Count == 0 || _history.Last().Sequence != snapshot.Sequence)
+            cache.LastGood = snapshot;
+            if (cache.History.Count == 0 || cache.History.Last().Sequence != snapshot.Sequence)
             {
-                _history.Enqueue(snapshot);
-                while (_history.Count > _historyCapacity)
+                cache.History.Enqueue(snapshot);
+                while (cache.History.Count > _historyCapacity)
                 {
-                    _history.Dequeue();
+                    cache.History.Dequeue();
                 }
             }
         }
+    }
+
+    private static bool IsStale(DateTimeOffset now, DateTimeOffset heartbeat, TimeSpan staleAfter) =>
+        heartbeat - now > MaximumFutureClockSkew || now - heartbeat > staleAfter;
+
+    private sealed class ScopeCache
+    {
+        public LiveStatusSnapshot? LastGood { get; set; }
+        public Queue<LiveStatusSnapshot> History { get; } = new();
+    }
+
+    private readonly record struct StatusScopeKey(
+        string CampaignId,
+        long CampaignGeneration,
+        string SessionId,
+        string MachineId,
+        CampaignRole SelectedRole)
+    {
+        public static StatusScopeKey From(LiveStatusSnapshot snapshot) => new(
+            snapshot.CampaignId,
+            snapshot.CampaignGeneration,
+            snapshot.SessionId,
+            snapshot.MachineId,
+            snapshot.SelectedRole);
+
+        public static StatusScopeKey From(StatusReadScope scope) => new(
+            scope.CampaignId,
+            scope.CampaignGeneration,
+            scope.SessionId,
+            scope.MachineId,
+            scope.SelectedRole);
     }
 
     private static bool Disabled(JsonElement element, string disabledName, string noName, string enabledName)
@@ -401,6 +489,9 @@ public sealed class LiveStatusReader
         return value == int.MinValue ? null : value;
     }
 
+    private static bool? NullableBool(JsonElement element, string name) =>
+        TryBool(element, name, out var value) ? value : null;
+
     private static long Long(JsonElement element, string name, long fallback)
     {
         if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out var value))
@@ -410,6 +501,18 @@ public sealed class LiveStatusReader
             && long.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number)
                 ? number
                 : fallback;
+    }
+
+    private static double Number(JsonElement element, string name, double fallback)
+    {
+        if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(name, out var value))
+            return fallback;
+        if (value.TryGetDouble(out var number) && double.IsFinite(number)) return number;
+        return value.ValueKind == JsonValueKind.String
+               && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number)
+               && double.IsFinite(number)
+            ? number
+            : fallback;
     }
 
     private static DateTimeOffset? Date(JsonElement element, string name)

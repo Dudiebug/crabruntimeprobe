@@ -27,6 +27,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly SnapshotEvidenceService _snapshotEvidenceService = new();
     private readonly CapabilityReadinessService _readinessService = new();
     private readonly PlayGuideReducer _playGuideReducer = new();
+    private readonly LiveDashboardReducer _liveDashboardReducer = new();
+    private readonly ResearchPreparationService _researchPreparation = new();
+    private readonly ResearchDashboardReducer _researchDashboardReducer = new();
+    private readonly ResearchArtifactStore _researchArtifacts = new();
+    private readonly BreadcrumbJournalReader _breadcrumbReader = new();
     private readonly GameProcessExitDetector _gameExitDetector = new();
     private readonly CancellationTokenSource _lifetime = new();
     private SnapshotReplayResult _lastGoodSnapshotReplay = SnapshotReplayResult.Empty;
@@ -35,6 +40,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private LocalCampaignState? _campaign;
     private LiveStatusReadResult _status = new(
         LiveStatusSnapshot.Empty, false, true, false, "Waiting for RuntimeProbe status.", DateTimeOffset.UtcNow);
+    private LiveDashboardStatus _liveDashboard = LiveDashboardStatus.Empty;
     private string _campaignName = "CrabSync Full Observe";
     private string _gameDirectory = string.Empty;
     private CampaignRole _selectedRole = CampaignRole.Host;
@@ -49,6 +55,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private IReadOnlyList<ChecklistDefinition> _checklistDefinitions = ChecklistCatalog.All;
     private IReadOnlyList<PlayGuideCategory> _allPlayGuideCategories = Array.Empty<PlayGuideCategory>();
     private PlayGuideFilter _playGuideFilter = PlayGuideFilter.ToDo;
+    private HookCandidateCatalog? _researchCatalog;
+    private HookValidationLedger? _researchLedger;
+    private TrustedHookManifest? _trustedManifest;
+    private HookQuarantineState? _quarantine;
+    private ResearchWorkspace? _researchWorkspace;
+    private ResearchRunPlan? _researchPlan;
+    private HookCandidateDefinition? _recommendedCandidate;
+    private HookValidationDepth? _recommendedDepth;
+    private BreadcrumbReadResult? _researchJournal;
+    private HookRunClassification? _researchClassification;
 
     public MainViewModel(string? fixture, bool demo)
     {
@@ -78,6 +94,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         OpenLastBundleCommand = new RelayCommand(OpenLastBundle, () => File.Exists(_lastBundle));
         ViewDiagnosticsCommand = new RelayCommand(ViewDiagnostics);
         SupportSummaryCommand = new RelayCommand(CopySupportSummary);
+        Research = new ResearchViewModel(
+            StartResearchAsync,
+            RepeatResearchAsync,
+            PrepareNextResearchDepthAsync,
+            RunCandidateAloneAsync,
+            QuarantineResearchCandidateAsync,
+            ReturnToSafePlayGuideAsync);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -88,6 +111,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICollectionView ChecklistView { get; }
     public ICollectionView CoverageView { get; }
     public IReadOnlyList<CampaignRole> RoleOptions { get; } = new[] { CampaignRole.Host, CampaignRole.JoinedClient };
+    public ResearchViewModel Research { get; }
 
     public ICommand InitializeCommand { get; }
     public ICommand BrowseGameCommand { get; }
@@ -208,13 +232,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         private set
         {
             if (!Set(ref _campaign, value)) return;
+            RefreshLiveDashboard();
             RaiseCommands();
             Raise(nameof(CampaignIdentitySummary));
             Raise(nameof(ElapsedSummary));
         }
     }
-    public LiveStatusReadResult Status { get => _status; private set { if (Set(ref _status, value)) RaiseStatusProperties(); } }
+    public LiveStatusReadResult Status
+    {
+        get => _status;
+        private set
+        {
+            if (!Set(ref _status, value)) return;
+            RefreshLiveDashboard();
+            RaiseStatusProperties();
+        }
+    }
     public LiveStatusSnapshot Snapshot => Status.Snapshot;
+    public LiveDashboardStatus LiveDashboard => _liveDashboard;
+    public LiveCollectionState LiveState => LiveDashboard.State;
+    public string LiveStateText => LiveDashboard.StateText;
+    public string LiveDetail => LiveDashboard.Detail;
+    public string HeartbeatAgeText => LiveDashboard.HeartbeatAgeText;
+    public string SequenceProgressText => LiveDashboard.SequenceText;
+    public string ActiveProfileText => LiveDashboard.ActiveProfile;
+    public string SamplingCategoryText => LiveDashboard.SamplingCategoryText;
+    public string CollectionReadinessText => LiveDashboard.ReadinessText;
     public string RoleSummary => $"selected {SelectedRole.ToContract()} - observed {Snapshot.ObservedRole} - {Snapshot.AuthorityStatus}";
     public string LifecycleSummary => $"{Snapshot.Lifecycle.State} - generation {Snapshot.Lifecycle.Generation} - {Snapshot.Lifecycle.Context}";
     public string RuntimeSummary
@@ -234,7 +277,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
     public string EvidenceSummary => $"{Snapshot.EvidenceHealth.State} - canonical {Snapshot.EvidenceHealth.CanonicalRows} - rejected {Snapshot.EvidenceHealth.RejectedRows}";
     public string HeartbeatSummary => Status.HasSnapshot
-        ? $"sequence {Snapshot.Sequence} - heartbeat {Snapshot.HeartbeatAtUtc:HH:mm:ss} UTC{(Status.IsStale ? " - STALE" : string.Empty)}"
+        ? $"{HeartbeatAgeText} - {SequenceProgressText}{(Status.IsStale ? " - STALE" : string.Empty)}"
         : "No valid status snapshot yet";
     public string ChecklistSummary => $"{Checklist.Count(item => item.IsComplete)} / {Checklist.Count} checklist observations complete";
     public string PlayGuideOverallSummary
@@ -340,6 +383,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
             var resources = _resourceLocator.Locate();
             _campaignService = new CampaignService(_store, _resourceLocator);
+            await LoadResearchDefaultsAsync(resources);
             var definitions = await new ChecklistDefinitionLoader()
                 .LoadAuthoritativeOrFallbackAsync(resources, _lifetime.Token);
             _checklistDefinitions = definitions;
@@ -362,6 +406,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 Raise(nameof(IsJoiningFriend));
                 Raise(nameof(GameDirectory));
                 Raise(nameof(LastBundle));
+                await LoadResearchWorkspaceAsync(Campaign);
+                await TryRecoverResearchPlanAsync(Campaign);
             }
             else if (string.IsNullOrWhiteSpace(GameDirectory))
             {
@@ -370,11 +416,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             }
             var localInstallation = _gameLocator.ValidateSelectedDirectory(GameDirectory);
             _localGameRunning = localInstallation is not null && new GameProcessService().IsRunning(localInstallation);
+            RefreshLiveDashboard();
 
             if (_demo)
             {
                 var snapshot = _statusReader.Parse(DemoStatus.Json, "embedded-demo");
-                Status = new LiveStatusReadResult(snapshot, true, false, false, string.Empty, DateTimeOffset.UtcNow);
+                Status = new LiveStatusReadResult(
+                    snapshot, true, false, false, string.Empty, snapshot.HeartbeatAtUtc.AddSeconds(1));
             }
             else if (!string.IsNullOrWhiteSpace(_fixture))
             {
@@ -388,6 +436,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             {
                 Status = await ReadCampaignStatusAsync(Campaign, _lifetime.Token);
             }
+
+            if (Campaign?.Phase == "monitoring" && (_localGameRunning || Status.HasSnapshot))
+                _gameExitDetector.Begin(DateTimeOffset.UtcNow, processSeen: true);
 
             RefreshChecklist(Status.Snapshot);
             Activity = _demo ? "Demo mode - no game files are changed" : "Ready - hook-free snapshot observation";
@@ -417,6 +468,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 installation, SelectedRole, CampaignName,
                 dashboardExecutablePath: Environment.ProcessPath,
                 cancellationToken: _lifetime.Token);
+            _researchPlan = null;
+            _researchJournal = null;
+            _researchClassification = null;
+            await LoadResearchWorkspaceAsync(Campaign);
             _autoCollected = false;
             _gameExitDetector.Reset();
             Activity = "Prepared - start Crab Champions when both computers are ready";
@@ -429,6 +484,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
+            if (Campaign?.Phase == "collected")
+                throw new InvalidOperationException(
+                    "This generation is already finalized. Prepare a fresh Play Guide or research run before launching again.");
+            if (_researchPlan?.Manifest is not null && _researchClassification is not null)
+                throw new InvalidOperationException(
+                    "This research run is already classified. Choose Repeat, Prepare next depth, Run candidate alone, or Return to safe Play Guide.");
             if (Campaign is null)
                 Campaign = await RequireCampaignService().ResumeAsync(_lifetime.Token, Environment.ProcessPath)
                            ?? throw new InvalidOperationException("Prepare a campaign first.");
@@ -437,9 +498,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             var processId = process.Id;
             ReplaceMonitoredProcess(process);
             _localGameRunning = true;
+            RefreshLiveDashboard();
             _gameExitDetector.Begin(DateTimeOffset.UtcNow, processSeen: true);
             Campaign = await RequireCampaignService().MarkMonitoringAsync(Campaign, _lifetime.Token);
-            Activity = $"Monitoring Crab Champions process {processId} - hook-free snapshots only";
+            Activity = _researchPlan?.Manifest is null
+                ? $"Monitoring Crab Champions process {processId} - hook-free snapshots only"
+                : $"Monitoring research process {processId} - trusted pool plus exactly one canary";
         }
         catch (Exception ex) { ShowError(ex); }
     }
@@ -468,12 +532,139 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             var processId = process.Id;
             ReplaceMonitoredProcess(process);
             _localGameRunning = true;
+            RefreshLiveDashboard();
             _gameExitDetector.Begin(DateTimeOffset.UtcNow, processSeen: true);
             Campaign = await RequireCampaignService().MarkMonitoringAsync(Campaign, _lifetime.Token);
-            Activity = $"Crab Champions opened the dashboard - hook-free snapshot monitoring on process {processId}";
+            Activity = _researchPlan?.Manifest is null
+                ? $"Crab Champions opened the dashboard - hook-free snapshot monitoring on process {processId}"
+                : $"Crab Champions opened the dashboard - progressive research monitoring on process {processId}";
         }
         catch (Exception ex) { ShowError(ex); }
     }
+
+    private Task StartResearchAsync() => PrepareResearchGenerationAsync(
+        ResearchRunType.Combined, null, null, launchGame: true);
+
+    private Task RepeatResearchAsync()
+    {
+        var canary = RequireCurrentCanary();
+        return PrepareResearchGenerationAsync(_researchPlan?.Manifest?.RunType ?? ResearchRunType.Combined,
+            canary.CandidateId, canary.ValidationDepth, launchGame: false);
+    }
+
+    private Task PrepareNextResearchDepthAsync()
+    {
+        var canary = RequireCurrentCanary();
+        if (canary.ValidationDepth >= HookValidationDepth.FullPassiveEvidence)
+            throw new InvalidOperationException("Depth 7 is already the deepest validation level.");
+        return PrepareResearchGenerationAsync(_researchPlan?.Manifest?.RunType ?? ResearchRunType.Combined,
+            canary.CandidateId, (HookValidationDepth)((int)canary.ValidationDepth + 1), launchGame: false);
+    }
+
+    private Task RunCandidateAloneAsync()
+    {
+        var canary = RequireCurrentCanary();
+        return PrepareResearchGenerationAsync(ResearchRunType.CanaryOnly,
+            canary.CandidateId, canary.ValidationDepth, launchGame: false);
+    }
+
+    private async Task PrepareResearchGenerationAsync(
+        ResearchRunType runType,
+        string? candidateId,
+        HookValidationDepth? depth,
+        bool launchGame)
+    {
+        try
+        {
+            var installation = RequireInstallation();
+            if (new GameProcessService().IsRunning(installation))
+                throw new InvalidOperationException("Close Crab Champions before preparing a new research generation.");
+            Activity = "Installing the read-only payload and validating the next research manifest...";
+            Campaign = await RequireCampaignService().PrepareAsync(
+                installation, SelectedRole, "Progressive Broad Observation",
+                dashboardExecutablePath: Environment.ProcessPath,
+                cancellationToken: _lifetime.Token);
+            var prepared = await _researchPreparation.PlanAsync(
+                Campaign, runType, candidateId, depth, cancellationToken: _lifetime.Token);
+            _researchWorkspace = prepared.Workspace;
+            _researchCatalog = prepared.Workspace.Catalog;
+            _researchLedger = prepared.Workspace.Ledger;
+            _trustedManifest = prepared.Workspace.TrustedManifest;
+            _quarantine = prepared.Workspace.Quarantine;
+            _recommendedCandidate = prepared.RecommendedCandidate;
+            _recommendedDepth = prepared.RecommendedDepth;
+            _researchPlan = prepared.Plan;
+            _researchJournal = null;
+            _researchClassification = null;
+            if (!prepared.Plan.IsValid)
+                throw new InvalidDataException(string.Join(Environment.NewLine, prepared.Plan.Errors));
+            await RequireCampaignService().ArmProgressiveObservationAsync(
+                Campaign, prepared.Plan, cancellationToken: _lifetime.Token);
+            _autoCollected = false;
+            _gameExitDetector.Reset();
+            RefreshResearchDashboard();
+            Activity = launchGame
+                ? "Research manifest armed - starting Crab Champions with one canary registered last"
+                : "Research manifest prepared for the next game launch; nothing advanced in the prior process";
+            await SavePreferencesAsync();
+            if (launchGame) await StartMonitoringAsync();
+        }
+        catch (Exception ex) { ShowError(ex); }
+    }
+
+    private async Task QuarantineResearchCandidateAsync()
+    {
+        try
+        {
+            if (_researchWorkspace is null || _quarantine is null || _researchLedger is null)
+                throw new InvalidOperationException("Research state is unavailable.");
+            var canary = RequireCurrentCanary();
+            var candidate = _researchWorkspace.Catalog.ById[canary.CandidateId];
+            var runId = _researchPlan?.Manifest?.RunId ?? $"manual-{DateTimeOffset.UtcNow:yyyyMMddTHHmmssZ}";
+            _quarantine = QuarantinePolicy.QuarantineExplicitly(_quarantine, candidate,
+                canary.ValidationDepth, runId, "Explicit dashboard quarantine");
+            var records = _researchLedger.Candidates.Select(record => record.CandidateId == candidate.Id
+                ? record with { State = HookCandidateState.Quarantined, TrustedDepth = null }
+                : record).ToArray();
+            _researchLedger = _researchLedger with { UpdatedAtUtc = DateTimeOffset.UtcNow, Candidates = records };
+            await _researchArtifacts.WriteQuarantineAsync(_researchWorkspace.QuarantinePath, _quarantine,
+                _researchWorkspace.Catalog, _researchWorkspace.Catalog.GeneratedAtUtc, _lifetime.Token);
+            await _researchArtifacts.WriteLedgerAsync(_researchWorkspace.LedgerPath, _researchLedger,
+                _researchWorkspace.Catalog.GeneratedAtUtc,
+                "Legacy observations remain history only and never confer compatibility-aware trust.", _lifetime.Token);
+            _researchWorkspace = _researchWorkspace with { Quarantine = _quarantine, Ledger = _researchLedger };
+            (_recommendedCandidate, _recommendedDepth) = ResearchPreparationService.Recommend(
+                _researchWorkspace.Catalog, _researchLedger, _quarantine);
+            RefreshResearchDashboard();
+            Activity = $"{candidate.DisplayName} quarantined; it cannot auto-arm";
+        }
+        catch (Exception ex) { ShowError(ex); }
+    }
+
+    private async Task ReturnToSafePlayGuideAsync()
+    {
+        try
+        {
+            var installation = RequireInstallation();
+            if (new GameProcessService().IsRunning(installation))
+                throw new InvalidOperationException("Close Crab Champions before returning to the safe profile.");
+            Campaign = await RequireCampaignService().PrepareAsync(
+                installation, SelectedRole, CampaignName,
+                dashboardExecutablePath: Environment.ProcessPath,
+                cancellationToken: _lifetime.Token);
+            _researchPlan = null;
+            _researchJournal = null;
+            _researchClassification = null;
+            await LoadResearchWorkspaceAsync(Campaign);
+            RefreshResearchDashboard();
+            Activity = "Safe Play Guide prepared - hook-free snapshot collection is restored for the next launch";
+        }
+        catch (Exception ex) { ShowError(ex); }
+    }
+
+    private HookCandidateSelection RequireCurrentCanary() =>
+        _researchPlan?.Manifest?.Canary
+        ?? throw new InvalidOperationException("No current canary run is available.");
 
     private async Task ResumeAsync()
     {
@@ -481,9 +672,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             Campaign = await RequireCampaignService().ResumeAsync(_lifetime.Token, Environment.ProcessPath)
                        ?? throw new InvalidOperationException("No valid prepared campaign is available to resume.");
+            _researchPlan = null;
+            _researchJournal = null;
+            _researchClassification = null;
             SelectedRole = Campaign.Role;
             CampaignName = Campaign.CampaignName;
             GameDirectory = Campaign.GameDirectory;
+            await LoadResearchWorkspaceAsync(Campaign);
             _gameExitDetector.Reset();
             Activity = "Campaign resumed - resume marker written; start monitoring when ready";
         }
@@ -568,11 +763,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             await RequireCampaignService().ResetAsync(Campaign, _lifetime.Token);
             Campaign = null;
+            _researchPlan = null;
+            _researchJournal = null;
+            _researchClassification = null;
             ReplaceMonitoredProcess(null);
+            _localGameRunning = false;
             _gameExitDetector.Reset();
             Status = new LiveStatusReadResult(LiveStatusSnapshot.Empty, false, true, false,
                 "No active campaign", DateTimeOffset.UtcNow);
             RefreshChecklist(Status.Snapshot);
+            RefreshResearchDashboard();
             Activity = "Dashboard campaign state reset - canonical evidence was not deleted";
         }
         catch (Exception ex) { ShowError(ex); }
@@ -598,6 +798,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                     RefreshChecklist(next.Snapshot);
                     RaiseSummaryProperties();
                 });
+                await RefreshResearchJournalAsync(token);
 
                 if (installation is null) continue;
                 if (runningProcess is not null) ReplaceMonitoredProcess(runningProcess);
@@ -613,6 +814,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                     catch (InvalidOperationException) { }
                     // Missing/stale status is evidence-health information, not proof that the game crashed.
                     var abnormal = nonZeroExit || next.Snapshot.CrashSuspected;
+                    await FinalizeResearchRunAsync(next, nonZeroExit, token);
                     var export = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
                         "CrabRuntimeProbe Evidence");
                     var result = await new EvidenceCollector().CollectAsync(
@@ -732,7 +934,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         var status = await _statusReader.ReadLatestAsync(
             campaign.StatusDirectory,
+            scope: StatusReadScope.FromCampaign(campaign),
             cancellationToken: cancellationToken);
+        if (status.HasSnapshot
+            && status.Snapshot.Runtime.ActiveProfile.Equals(
+                "progressive-broad-observation", StringComparison.OrdinalIgnoreCase))
+        {
+            // Progressive snapshot rows truthfully report hooksDisabled=false. They remain useful
+            // research evidence, but they must never enter the hook-free Play Guide reducer.
+            return status;
+        }
         try
         {
             var snapshots = await _snapshotEvidenceService.LoadAsync(campaign, cancellationToken);
@@ -787,6 +998,175 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    private async Task LoadResearchDefaultsAsync(DashboardResources resources)
+    {
+        _researchCatalog = await _researchArtifacts.ReadCatalogAsync(
+            Path.Combine(resources.CampaignRoot, "hook_candidate_catalog.json"), _lifetime.Token);
+        _researchLedger = await _researchArtifacts.ReadLedgerAsync(
+            Path.Combine(resources.CampaignRoot, "hook_validation_ledger.json"), _lifetime.Token);
+        _trustedManifest = await _researchArtifacts.ReadTrustedManifestAsync(
+            Path.Combine(resources.CampaignRoot, "trusted_hook_manifest.json"), _lifetime.Token);
+        _quarantine = await _researchArtifacts.ReadQuarantineAsync(
+            Path.Combine(resources.CampaignRoot, "hook_quarantine.json"), _lifetime.Token);
+        (_recommendedCandidate, _recommendedDepth) = ResearchPreparationService.Recommend(
+            _researchCatalog, _researchLedger, _quarantine);
+        RefreshResearchDashboard();
+    }
+
+    private async Task LoadResearchWorkspaceAsync(LocalCampaignState campaign)
+    {
+        _researchWorkspace = await _researchPreparation.LoadWorkspaceAsync(campaign,
+            cancellationToken: _lifetime.Token);
+        _researchCatalog = _researchWorkspace.Catalog;
+        _researchLedger = _researchWorkspace.Ledger;
+        _trustedManifest = _researchWorkspace.TrustedManifest;
+        _quarantine = _researchWorkspace.Quarantine;
+        (_recommendedCandidate, _recommendedDepth) = ResearchPreparationService.Recommend(
+            _researchCatalog, _researchLedger, _quarantine);
+        RefreshResearchDashboard();
+    }
+
+    private async Task TryRecoverResearchPlanAsync(LocalCampaignState campaign)
+    {
+        if (_researchWorkspace is null || campaign.Phase is not ("prepared" or "monitoring")
+            || !Directory.Exists(campaign.StatusDirectory))
+            return;
+        var matching = new List<HookRunManifest>();
+        foreach (var path in Directory.EnumerateFiles(
+                     campaign.StatusDirectory, "hook_run_manifest_*.json", SearchOption.TopDirectoryOnly))
+        {
+            try
+            {
+                var manifest = await _researchArtifacts.ReadRunManifestAsync(path, _lifetime.Token);
+                if (manifest.SessionId == campaign.SessionId
+                    && manifest.CampaignGeneration == campaign.Generation
+                    && manifest.SelectedRole == campaign.Role)
+                    matching.Add(manifest);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       or ResearchSchemaException or System.Text.Json.JsonException)
+            {
+                // A malformed artifact cannot be resumed; the valid exact match below remains required.
+            }
+        }
+        if (matching.Count != 1) return;
+        var persisted = matching[0];
+        var validated = new ResearchRunPlanner().CreatePlan(
+            _researchWorkspace.Catalog,
+            persisted.Compatibility,
+            _researchWorkspace.TrustedManifest,
+            _researchWorkspace.Ledger,
+            _researchWorkspace.Quarantine,
+            persisted.RunType,
+            persisted.Canary?.CandidateId,
+            persisted.Canary?.ValidationDepth,
+            persisted.SelectedRole,
+            persisted.CampaignGeneration,
+            persisted.RunId,
+            persisted.SessionId);
+        if (!validated.IsValid || validated.Manifest is null
+            || validated.Manifest.Compatibility.Fingerprint != persisted.Compatibility.Fingerprint
+            || !validated.Manifest.RegistrationOrder.SequenceEqual(persisted.RegistrationOrder, StringComparer.Ordinal)
+            || !validated.Manifest.TrustedCandidates.SequenceEqual(persisted.TrustedCandidates)
+            || validated.Manifest.Canary != persisted.Canary)
+            return;
+        _researchPlan = validated with { Manifest = persisted };
+        _researchClassification = null;
+        _researchJournal = null;
+        RefreshResearchDashboard();
+    }
+
+    private async Task RefreshResearchJournalAsync(CancellationToken cancellationToken)
+    {
+        var manifest = _researchPlan?.Manifest;
+        if (manifest is null || Campaign is null) return;
+        var path = Path.Combine(Campaign.StatusDirectory, $"hook_breadcrumbs_{manifest.RunId}.jsonl");
+        if (!File.Exists(path))
+        {
+            await Application.Current.Dispatcher.InvokeAsync(RefreshResearchDashboard);
+            return;
+        }
+        var journal = await _breadcrumbReader.ReadAsync(path, manifest.RunId, cancellationToken);
+        await Application.Current.Dispatcher.InvokeAsync(() =>
+        {
+            _researchJournal = journal;
+            RefreshResearchDashboard();
+        });
+    }
+
+    private async Task FinalizeResearchRunAsync(
+        LiveStatusReadResult status,
+        bool nonZeroExit,
+        CancellationToken cancellationToken)
+    {
+        var manifest = _researchPlan?.Manifest;
+        if (manifest is null || Campaign is null || _researchWorkspace is null) return;
+        await RefreshResearchJournalAsync(cancellationToken);
+        _researchJournal ??= new BreadcrumbReadResult(
+            Array.Empty<HookBreadcrumb>(),
+            new[] { new BreadcrumbReadIssue("journal-missing", "No breadcrumb journal was recovered.", 0, true) },
+            false, null, null, new Dictionary<string, int>());
+        var evidenceState = status.Snapshot.EvidenceHealth.State ?? string.Empty;
+        var signals = new RunObservationSignals(
+            CleanShutdown: !nonZeroExit && !status.Snapshot.CrashSuspected,
+            ProcessExitObserved: true,
+            AbnormalProcessExit: nonZeroExit || status.Snapshot.CrashSuspected,
+            ExternalTermination: false,
+            WriterStale: status.IsStale,
+            EvidenceWriteFailed: evidenceState.Contains("write", StringComparison.OrdinalIgnoreCase) ||
+                                 evidenceState.Contains("error", StringComparison.OrdinalIgnoreCase),
+            StatusFaulted: LiveDashboard.State == LiveCollectionState.Faulted,
+            CrashArtifactCorrelated: status.Snapshot.CrashSuspected,
+            Ue4ssCallbackErrors: 0);
+        _researchClassification = new HookRunClassifier().Classify(manifest, _researchJournal, signals);
+        var classificationPath = Path.Combine(Campaign.StatusDirectory,
+            $"hook_run_classification_{manifest.RunId}.json");
+        await _researchArtifacts.WriteClassificationAsync(classificationPath, _researchClassification, cancellationToken);
+        _researchLedger = ValidationLedgerReducer.Apply(
+            _researchWorkspace.Ledger, manifest, _researchClassification, _researchJournal,
+            lifecycleTransitionObserved: status.Snapshot.Lifecycle.Generation > 0,
+            reducerFixtureCovered: true,
+            newUe4ssCallbackError: signals.Ue4ssCallbackErrors > 0);
+        _quarantine = QuarantinePolicy.AddCrashSuspect(
+            _researchWorkspace.Quarantine, _researchWorkspace.Catalog, _researchClassification, manifest.RunId);
+        if (manifest.Canary is { } completedCanary)
+        {
+            var promotion = TrustedManifestBuilder.Promote(
+                _researchWorkspace.Catalog,
+                _researchLedger,
+                completedCanary.CandidateId,
+                completedCanary.ValidationDepth,
+                _researchWorkspace.Compatibility,
+                requireBothRoles: true);
+            _researchLedger = promotion.Ledger;
+            _trustedManifest = promotion.Manifest;
+        }
+        else
+        {
+            _trustedManifest = TrustedManifestBuilder.Build(
+                _researchWorkspace.Catalog, _researchLedger, _researchWorkspace.Compatibility);
+        }
+        await _researchArtifacts.WriteLedgerAsync(_researchWorkspace.LedgerPath, _researchLedger,
+            _researchWorkspace.Catalog.GeneratedAtUtc,
+            "Legacy observations remain history only and never confer compatibility-aware trust.", cancellationToken);
+        await _researchArtifacts.WriteTrustedManifestAsync(_researchWorkspace.TrustedManifestPath, _trustedManifest,
+            _researchWorkspace.Catalog.GeneratedAtUtc, cancellationToken);
+        await _researchArtifacts.WriteQuarantineAsync(_researchWorkspace.QuarantinePath, _quarantine,
+            _researchWorkspace.Catalog, _researchWorkspace.Catalog.GeneratedAtUtc, cancellationToken);
+        // Every research authorization is single-process. Persist the outcome first, then
+        // restore the hook-free config so a later game launch cannot silently repeat it.
+        await RequireCampaignService().DisarmProgressiveObservationAsync(Campaign, cancellationToken);
+        _researchWorkspace = _researchWorkspace with
+        {
+            Ledger = _researchLedger,
+            TrustedManifest = _trustedManifest,
+            Quarantine = _quarantine
+        };
+        (_recommendedCandidate, _recommendedDepth) = ResearchPreparationService.Recommend(
+            _researchWorkspace.Catalog, _researchLedger, _quarantine);
+        await Application.Current.Dispatcher.InvokeAsync(RefreshResearchDashboard);
+    }
+
     private bool FilterCoverage(object value) => value is CoverageRow row && (!NeedsCoverageOnly || row.NeedsCoverage);
 
     private void RefreshChecklist(LiveStatusSnapshot snapshot)
@@ -797,8 +1177,48 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void RefreshPlayGuide()
     {
-        _allPlayGuideCategories = _playGuideReducer.Reduce(Checklist.ToArray(), SelectedRole, Status.Cleanliness);
+        _allPlayGuideCategories = _playGuideReducer.Reduce(
+            Checklist.ToArray(), SelectedRole, Status.Cleanliness, LiveDashboard.Capabilities);
         ApplyPlayGuideFilter();
+    }
+
+    private void RefreshLiveDashboard()
+    {
+        var useCampaignContext = !_demo && string.IsNullOrWhiteSpace(_fixture);
+        var monitoringExpected = useCampaignContext
+                                 && Campaign?.Phase is "prepared" or "monitoring" or "stop-requested";
+        var collectionStopped = useCampaignContext && Campaign?.Phase is "collected";
+        var next = _liveDashboardReducer.Reduce(Status, _localGameRunning, monitoringExpected, collectionStopped);
+        if (EqualityComparer<LiveDashboardStatus>.Default.Equals(_liveDashboard, next))
+        {
+            RefreshResearchDashboard();
+            return;
+        }
+        _liveDashboard = next;
+        Raise(nameof(LiveDashboard));
+        Raise(nameof(LiveState));
+        Raise(nameof(LiveStateText));
+        Raise(nameof(LiveDetail));
+        Raise(nameof(HeartbeatAgeText));
+        Raise(nameof(SequenceProgressText));
+        Raise(nameof(ActiveProfileText));
+        Raise(nameof(SamplingCategoryText));
+        Raise(nameof(CollectionReadinessText));
+        Raise(nameof(HeartbeatSummary));
+        RefreshResearchDashboard();
+    }
+
+    private void RefreshResearchDashboard()
+    {
+        var candidateId = _researchPlan?.Manifest?.Canary?.CandidateId ?? _recommendedCandidate?.Id;
+        var candidateRecord = string.IsNullOrWhiteSpace(candidateId)
+            ? null
+            : _researchLedger?.Candidates.FirstOrDefault(record => record.CandidateId == candidateId);
+        var state = _researchDashboardReducer.Reduce(
+            _researchPlan, _recommendedCandidate, _recommendedDepth, _researchJournal,
+            _researchClassification, LiveDashboard, Snapshot.Safety, _quarantine,
+            candidateRecord, _localGameRunning, Campaign is not null);
+        Research.Apply(state);
     }
 
     private void ApplyPlayGuideFilter()
@@ -854,6 +1274,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private void RaiseStatusProperties()
     {
         Raise(nameof(Snapshot));
+        Raise(nameof(LiveDashboard));
+        Raise(nameof(LiveState));
+        Raise(nameof(LiveStateText));
+        Raise(nameof(LiveDetail));
+        Raise(nameof(HeartbeatAgeText));
+        Raise(nameof(SequenceProgressText));
+        Raise(nameof(ActiveProfileText));
+        Raise(nameof(SamplingCategoryText));
+        Raise(nameof(CollectionReadinessText));
         Raise(nameof(RoleSummary));
         Raise(nameof(LifecycleSummary));
         Raise(nameof(RuntimeSummary));

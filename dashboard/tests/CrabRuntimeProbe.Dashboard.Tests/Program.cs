@@ -8,7 +8,10 @@ var tests = new (string Name, Func<Task> Body)[]
 {
     ("status schema version and additive fields", StatusSchemaAsync),
     ("atomic ring partial-read fallback and parser update", RingFallbackAsync),
+    ("campaign-scoped last-good status isolation", ScopedStatusAsync),
     ("stale heartbeat plus crash and dirty state", StaleCrashDirtyAsync),
+    ("live dashboard freshness, sequence, profile, category, and readiness states", LiveDashboardReducerAsync),
+    ("progressive catalog, canary, breadcrumbs, attribution, compatibility, and promotion", ResearchContractsAsync),
     ("hook-free snapshot replay qualification and rejection", SnapshotReplayAsync),
     ("snapshot evidence file filtering and fail-closed merge", SnapshotEvidenceServiceAsync),
     ("data-driven checklist prerequisites and qualifying evidence", ChecklistAsync),
@@ -24,6 +27,13 @@ var tests = new (string Name, Func<Task> Body)[]
     ("resource locator packaged and repository modes", ResourceLocatorAsync),
     ("source guards, fixture, and demo", SourceGuardsAndFixturesAsync)
 };
+
+static async Task ResearchContractsAsync()
+{
+    var results = await ResearchContractSelfTest.RunAsync();
+    Require(results.Count >= 14 && results.Any(result => result.Contains("every enabled begin boundary", StringComparison.Ordinal)),
+        "progressive research contract self-tests did not complete");
+}
 
 var failures = 0;
 foreach (var test in tests)
@@ -77,7 +87,44 @@ static async Task RingFallbackAsync()
     Require(fallback.UsedLastGood && fallback.Snapshot.Sequence == 1, "partial-read fallback lost last good snapshot");
     await File.WriteAllTextAsync(Path.Combine(temp.Path, "live_status.slot2.json"), StatusJson(2, now.AddSeconds(2), 9, "runtime-a"));
     var updated = await reader.ReadLatestAsync(temp.Path, now.AddSeconds(2));
-    Require(updated.Snapshot.Sequence == 2 && reader.History.Count == 2, "parser state did not advance");
+    Require(updated.Snapshot.Sequence == 2 && updated.PreviousSequence == 1 && reader.History.Count == 2,
+        "parser state did not advance");
+}
+
+static async Task ScopedStatusAsync()
+{
+    using var temp = new TempDirectory();
+    var reader = new LiveStatusReader();
+    var now = DateTimeOffset.Parse("2026-07-11T18:00:00Z");
+    var firstScope = new StatusReadScope(
+        "crabsync-full-observe", 1, "session-first", "machine-test", CampaignRole.Host);
+    await File.WriteAllTextAsync(
+        Path.Combine(temp.Path, "live_status.slot0.json"),
+        StatusJson(100, now, 1, "session-first"));
+    var first = await reader.ReadLatestAsync(temp.Path, now, scope: firstScope);
+    Require(first.HasSnapshot && first.Snapshot.Sequence == 100, "first campaign scope did not load");
+
+    var secondScope = new StatusReadScope(
+        "crabsync-full-observe", 2, "session-second", "machine-test", CampaignRole.Host);
+    await File.WriteAllTextAsync(Path.Combine(temp.Path, "live_status.slot0.json"), "{ partial");
+    await File.WriteAllTextAsync(
+        Path.Combine(temp.Path, "live_status.slot1.json"),
+        StatusJson(1, now.AddSeconds(1), 2, "session-second"));
+    var second = await reader.ReadLatestAsync(temp.Path, now.AddSeconds(1), scope: secondScope);
+    Require(second.HasSnapshot && second.Snapshot.Sequence == 1 && !second.UsedLastGood,
+        "new generation was contaminated by the prior high sequence");
+
+    await File.WriteAllTextAsync(Path.Combine(temp.Path, "live_status.slot1.json"), "{");
+    var secondFallback = await reader.ReadLatestAsync(temp.Path, now.AddSeconds(2), scope: secondScope);
+    Require(secondFallback.UsedLastGood && secondFallback.Snapshot.SessionId == "session-second"
+            && secondFallback.Snapshot.Sequence == 1,
+        "same-scope fallback did not retain the second campaign snapshot");
+
+    var absentScope = new StatusReadScope(
+        "crabsync-full-observe", 3, "session-third", "machine-test", CampaignRole.Host);
+    var absent = await reader.ReadLatestAsync(temp.Path, now.AddSeconds(3), scope: absentScope);
+    Require(!absent.HasSnapshot && absent.Snapshot.Sequence == 0,
+        "a missing scope fell back to another campaign's status");
 }
 
 static async Task StaleCrashDirtyAsync()
@@ -90,6 +137,122 @@ static async Task StaleCrashDirtyAsync()
     Require(result.IsStale, "stale heartbeat was accepted as fresh");
     Require(result.Cleanliness == EvidenceCleanliness.CrashSuspect, "crash must dominate dirty classification");
     Require(result.Snapshot.DirtyEvidence && result.Snapshot.CrashSuspected, "dirty/crash flags not parsed");
+    await File.WriteAllTextAsync(
+        Path.Combine(temp.Path, "live_status.slot0.json"),
+        StatusJson(5, now.AddSeconds(10), 1, "runtime"));
+    var future = await new LiveStatusReader().ReadLatestAsync(temp.Path, now, TimeSpan.FromSeconds(8));
+    Require(future.IsStale && future.Cleanliness == EvidenceCleanliness.Dirty,
+        "future heartbeat bypassed fail-closed freshness handling");
+}
+
+static async Task LiveDashboardReducerAsync()
+{
+    var reader = new LiveStatusReader();
+    var reducer = new LiveDashboardReducer();
+    var fixtureRoot = Path.Combine(AppContext.BaseDirectory, "Fixtures");
+    var warmingSnapshot = await reader.ParseFileAsync(Path.Combine(fixtureRoot, "live_status_warming_v1.json"));
+    var warmingNow = warmingSnapshot.HeartbeatAtUtc.AddSeconds(2);
+    var warming = reducer.Reduce(new LiveStatusReadResult(
+        warmingSnapshot, true, false, false, string.Empty, warmingNow, PreviousSequence: 20),
+        localGameRunning: true,
+        monitoringExpected: true);
+    Require(warming.State == LiveCollectionState.Warming
+            && warming.HeartbeatAgeText == "2s ago"
+            && warming.SequenceText == "21 (+1)"
+            && warming.SequenceAdvanced
+            && warming.ActiveProfile == "crabsync-full-observe"
+            && warming.ReadinessText == "6/10 stable samples",
+        "warming live projection lost age, sequence, profile, or stability progress");
+
+    var collectingSnapshot = await reader.ParseFileAsync(Path.Combine(fixtureRoot, "live_status_collecting_v1.json"));
+    var collecting = reducer.Reduce(new LiveStatusReadResult(
+        collectingSnapshot, true, false, false, string.Empty,
+        collectingSnapshot.HeartbeatAtUtc.AddMilliseconds(500), PreviousSequence: 23),
+        localGameRunning: true);
+    Require(collecting.State == LiveCollectionState.Collecting
+            && collecting.SamplingCategory == "slots"
+            && collecting.SamplingCategoryText == "Inventory slots"
+            && collecting.CollectionReady
+            && collecting.HasFreshWriter
+            && collecting.SafetyProven,
+        "collecting state did not expose category/readiness truth");
+
+    var progressiveSnapshot = collectingSnapshot with
+    {
+        Runtime = collectingSnapshot.Runtime with { ActiveProfile = "progressive-broad-observation" },
+        Safety = collectingSnapshot.Safety with { HooksDisabled = false }
+    };
+    var progressive = reducer.Reduce(new LiveStatusReadResult(
+        progressiveSnapshot, true, false, false, string.Empty,
+        progressiveSnapshot.HeartbeatAtUtc.AddSeconds(1)), localGameRunning: true);
+    Require(progressive.State == LiveCollectionState.Collecting
+            && progressive.SafetyProven
+            && progressive.Capabilities.ObservableChecklistIds.Count == 0,
+        "controlled research hooks were treated as a normal-mode safety failure or Play Guide capability");
+
+    var stableSnapshot = collectingSnapshot with
+    {
+        Runtime = collectingSnapshot.Runtime with
+        {
+            CurrentProbeStage = "snapshot:waiting-for-stable-game",
+            CurrentSamplingCategory = string.Empty,
+            CollectionReady = false
+        }
+    };
+    var stable = reducer.Reduce(new LiveStatusReadResult(
+        stableSnapshot, true, false, false, string.Empty, stableSnapshot.HeartbeatAtUtc.AddSeconds(1)), true);
+    Require(stable.State == LiveCollectionState.Stable && !stable.CollectionReady,
+        "stable state was collapsed into ready");
+    var readySnapshot = stableSnapshot with
+    {
+        Runtime = stableSnapshot.Runtime with { CollectionReady = true }
+    };
+    var ready = reducer.Reduce(new LiveStatusReadResult(
+        readySnapshot, true, false, false, string.Empty, readySnapshot.HeartbeatAtUtc.AddSeconds(1)), true);
+    Require(ready.State == LiveCollectionState.Ready && ready.CollectionReady,
+        "ready state was not distinguished from stable");
+
+    var staleResult = new LiveStatusReadResult(
+        collectingSnapshot, true, true, false, string.Empty, collectingSnapshot.HeartbeatAtUtc.AddSeconds(30), 24);
+    var stale = reducer.Reduce(staleResult, localGameRunning: true, monitoringExpected: true);
+    Require(staleResult.Cleanliness == EvidenceCleanliness.Dirty
+            && stale.State == LiveCollectionState.Stale
+            && !stale.HasFreshWriter
+            && !stale.CollectionReady,
+        "stale-only status remained clean or collection-ready");
+
+    var stoppedSnapshot = collectingSnapshot with
+    {
+        Runtime = collectingSnapshot.Runtime with { RuntimeProbeState = "stopped", StopRequested = true }
+    };
+    var stopped = reducer.Reduce(new LiveStatusReadResult(
+        stoppedSnapshot, true, true, false, string.Empty, stoppedSnapshot.HeartbeatAtUtc.AddMinutes(1)), false);
+    Require(stopped.State == LiveCollectionState.Stopped,
+        "explicit clean stop was misreported as a stalled writer");
+
+    var unsafeSnapshot = collectingSnapshot with
+    {
+        Safety = collectingSnapshot.Safety with { WritesDisabled = false }
+    };
+    var faulted = reducer.Reduce(new LiveStatusReadResult(
+        unsafeSnapshot, true, false, false, string.Empty, unsafeSnapshot.HeartbeatAtUtc.AddSeconds(1)), true);
+    Require(faulted.State == LiveCollectionState.Faulted && !faulted.SafetyProven,
+        "missing hook-free safety proof did not fault closed");
+
+    var future = reducer.Reduce(new LiveStatusReadResult(
+        collectingSnapshot, true, false, false, string.Empty, collectingSnapshot.HeartbeatAtUtc.AddSeconds(-10)), true);
+    Require(future.State == LiveCollectionState.Faulted && future.HasClockSkew,
+        "future heartbeat timestamp was presented as healthy");
+
+    var unavailable = reducer.Reduce(new LiveStatusReadResult(
+        LiveStatusSnapshot.Empty, false, true, false, "missing", warmingNow), localGameRunning: false);
+    var writerPending = reducer.Reduce(new LiveStatusReadResult(
+        LiveStatusSnapshot.Empty, false, true, false, "missing", warmingNow), localGameRunning: true);
+    Require(unavailable.State == LiveCollectionState.GameUnavailable
+            && writerPending.State == LiveCollectionState.Warming
+            && !unavailable.SafetyProven
+            && !LiveStatusSnapshot.Empty.Safety.AllRequiredSafe,
+        "missing writer states were presented as ready or safety-proven");
 }
 
 static Task SnapshotReplayAsync()
@@ -145,8 +308,15 @@ static Task SnapshotReplayAsync()
         hooksDisabled: false);
     var unsafeReplay = reducer.ReplayJsonl(unsafeJsonl, scope);
     Require(unsafeReplay.Qualifications.Count == 0 && unsafeReplay.Checklist.Count == 0
-            && unsafeReplay.Rejections.Any(item => item.Code == "unsafe-row"),
+            && unsafeReplay.Rejections.Any(item => item.Code is "unsafe-row" or "profile-safety-mismatch"),
         "unsafe snapshot rows were not rejected fail-closed");
+    var progressiveReplay = reducer.ReplayJsonl(
+        unsafeJsonl.Replace("\"worldFingerprint\"",
+            "\"observationProfile\":\"progressive-broad-observation\",\"worldFingerprint\"",
+            StringComparison.Ordinal), scope);
+    Require(progressiveReplay.Qualifications.Count == 0 && progressiveReplay.Checklist.Count == 0
+            && progressiveReplay.Rejections.Any(item => item.Code == "unsafe-row"),
+        "truthful progressive rows entered the hook-free Play Guide reducer");
 
     var dirtyReplay = reducer.ReplayJsonl(
         SnapshotDeltaJsonl("health", "currentHealth", 100m, 50m, session, generation, machine,
@@ -249,6 +419,11 @@ static async Task SnapshotEvidenceServiceAsync()
     Require(merged.Snapshot.Checklist.TryGetValue("resource-crystal-gain", out var evidence)
             && evidence.QualifyingEvidence,
         "clean snapshot evidence was not merged into live checklist status");
+    var staleMerge = service.Merge(
+        status with { IsStale = true }, loaded.Replay, SnapshotReplayScope.FromCampaign(campaign));
+    Require(staleMerge.Cleanliness == EvidenceCleanliness.Dirty
+            && !staleMerge.Snapshot.Checklist.ContainsKey("resource-crystal-gain"),
+        "stale live status was allowed to qualify snapshot evidence");
 
     await File.AppendAllTextAsync(accessPath, "{\"recordType\":\"snapshot-observation\"");
     var rejected = await service.LoadAsync(campaign);
@@ -311,8 +486,12 @@ static async Task PlayGuideAsync()
     var powerUps = hostGuide.SelectMany(category => category.Actions).Single(action => action.Id == "power-ups");
     Require(powerUps.Subtasks.Select(item => item.Label).SequenceEqual(new[]
     {
-        "Weapon mod", "Ability mod", "Melee mod", "Perk", "Relic"
+        "Weapon mod", "Ability mod", "Melee mod", "Perk", "Local relic count increased"
     }), "power-up action does not expose the five required friend-facing chips");
+    var inventoryWatch = hostGuide.SelectMany(category => category.Actions)
+        .Single(action => action.Id == "inventory-watch");
+    Require(inventoryWatch.Subtasks.Any(item => item.Label == "Pickup callback observed"),
+        "pickup callback outcome is not labeled independently from local relic count");
     var inventoryStageSource = await File.ReadAllTextAsync(
         Path.Combine(repo, "client", "Mods", "CrabRuntimeProbe", "Scripts", "inventory_stage_manager.lua"));
     foreach (var canonicalRuntimeId in new[]
@@ -346,6 +525,29 @@ static async Task PlayGuideAsync()
     Require(!sameLobbyJoined.LinkedChecklistIds.Contains("session-host-detected", StringComparer.OrdinalIgnoreCase)
             && sameLobbyJoined.LinkedChecklistIds.Contains("session-joined-client-detected", StringComparer.OrdinalIgnoreCase),
         "joined-client Play Guide was blocked by the opposite computer's role-only signal");
+
+    var hookFreeCapabilities = NormalObservationCapabilities.ForProfile("crabsync-full-observe");
+    var capabilityGuide = reducer.Reduce(
+        unobserved, CampaignRole.Host, EvidenceCleanliness.Clean, hookFreeCapabilities);
+    var earnCrystals = capabilityGuide.SelectMany(category => category.Actions)
+        .Single(action => action.Id == "earn-crystals");
+    var chest = capabilityGuide.SelectMany(category => category.Actions)
+        .Single(action => action.Id == "chest");
+    var capabilityPowerUps = capabilityGuide.SelectMany(category => category.Actions)
+        .Single(action => action.Id == "power-ups");
+    var capabilityInventoryWatch = capabilityGuide.SelectMany(category => category.Actions)
+        .Single(action => action.Id == "inventory-watch");
+    Require(earnCrystals.CanObserve && earnCrystals.HasObservabilityExplanation,
+        "partially observable crystal action did not disclose its profile limitation");
+    Require(!chest.CanObserve && chest.State == PlayGuideDisplayState.Waiting
+            && chest.ObservabilityExplanation.Contains("Not observable", StringComparison.OrdinalIgnoreCase),
+        "undetectable chest action was still presented as an ordinary actionable task");
+    Require(capabilityGuide.Single(category => category.Id == "shops").NextRecommendedAction
+            .Contains("cannot be detected", StringComparison.OrdinalIgnoreCase),
+        "category recommendation still suggested an undetectable action");
+    Require(capabilityPowerUps.Subtasks.Single(item => item.Label == "Local relic count increased").IsNotObservable
+            && capabilityInventoryWatch.Subtasks.Single(item => item.Label == "Pickup callback observed").IsNotObservable,
+        "relic count and exact pickup callback did not retain separate not-observable labels");
 
     var confirmed = definitions.Select(definition => ChecklistItem(definition, ChecklistDisplayState.Confirmed)).ToArray();
     var completedGuide = reducer.Reduce(confirmed, CampaignRole.Host);
@@ -496,7 +698,9 @@ static async Task PrepareAndResumeAsync()
                  "allowInventoryArrayShapeConfirmProbes = false",
                  "allowInventoryUserdataIntrospectionProbes = false",
                  "allowInventoryArrayCountProbes = false",
-                 "allowInventoryElementDataAssetReadProbes = false"
+                 "allowInventoryElementDataAssetReadProbes = false",
+                 "progressiveObservationEnabled = false", "canaryCandidateId = unassigned",
+                 "canaryValidationDepth = 0", "trustedCandidateSelections = "
              })
         Require(config.Contains(required, StringComparison.Ordinal), $"safe config missing {required}");
     Require(config.Contains($"campaignSessionId = {state.SessionId}", StringComparison.Ordinal),
@@ -506,6 +710,33 @@ static async Task PrepareAndResumeAsync()
     foreach (var name in new[] { "BPModLoaderMod : 1", "BPML_GenericFunctions : 1", "CrabRuntimeProbe : 1" })
         Require(mods.Contains(name, StringComparison.OrdinalIgnoreCase), $"required mod not enabled: {name}");
     Require(File.Exists(canonical), "prepare deleted canonical append-only evidence");
+
+    var research = await new ResearchPreparationService().PlanAsync(
+        state, ResearchRunType.Combined, resourceStartPath: package);
+    Require(research.Plan.IsValid && research.Plan.Manifest?.TrustedCandidates.Count == 0
+            && research.Plan.Manifest.Canary?.CandidateId == "hook-crabps-onrep-islandrewardrarity",
+        "initial progressive research plan was not zero-trusted plus the principal canary");
+    var runManifest = await service.ArmProgressiveObservationAsync(state, research.Plan);
+    Require(File.Exists(runManifest), "run identity was not persisted before arming");
+    var researchConfig = await File.ReadAllTextAsync(
+        Path.Combine(game, "Mods", "CrabRuntimeProbe", "Scripts", "config.txt"));
+    foreach (var required in new[]
+             {
+                 "progressiveObservationEnabled = true", "researchRunType = combined",
+                 "trustedCandidateSelections = ",
+                 "canaryCandidateId = hook-crabps-onrep-islandrewardrarity", "canaryValidationDepth = 1",
+                 "canaryState = armed", "allowPassiveObservationHooks = false",
+                 "allowWriteProbes = false", "allowRpcProbes = false"
+             })
+        Require(researchConfig.Contains(required, StringComparison.Ordinal), $"research config missing {required}");
+    await service.DisarmProgressiveObservationAsync(state);
+    var disarmedConfig = await File.ReadAllTextAsync(
+        Path.Combine(game, "Mods", "CrabRuntimeProbe", "Scripts", "config.txt"));
+    Require(disarmedConfig.Contains("progressiveObservationEnabled = false", StringComparison.Ordinal)
+            && disarmedConfig.Contains("researchRunId = unassigned", StringComparison.Ordinal)
+            && disarmedConfig.Contains("canaryCandidateId = unassigned", StringComparison.Ordinal)
+            && disarmedConfig.Contains("canaryValidationDepth = 0", StringComparison.Ordinal),
+        "completed research authorization was not restored to a hook-free next-launch config");
     var autostartPath = await File.ReadAllTextAsync(
         Path.Combine(game, "Mods", "CrabRuntimeProbe", "Scripts", "dashboard_autostart.txt"));
     Require(autostartPath.Trim() == Path.GetFullPath(dashboardExecutable),
@@ -588,7 +819,7 @@ static async Task CollectionAsync()
     var executable = Path.Combine(game, "CrabChampions.exe");
     await File.WriteAllBytesAsync(executable, Array.Empty<byte>());
     var state = new LocalCampaignState(
-        1, "crabsync-full-observe", "Test Campaign", generation, "dashboard-session", "machine-a",
+        1, "crabsync-full-observe", "Test Campaign", generation, runtimeSession, "machine-test",
         CampaignRole.Host, game, executable, status, "monitoring", DateTimeOffset.UtcNow.AddMinutes(-1),
         DateTimeOffset.UtcNow, string.Empty);
     var result = await new EvidenceCollector().CollectAsync(
@@ -634,6 +865,11 @@ static async Task CollectionAsync()
                  "hooksDisabled", "runtimeDiscoveryDisabled", "inventoryStagesDisabled"
              })
         Require(safety.GetProperty(name).ValueKind == JsonValueKind.True, $"safety contract mismatch {name}");
+    foreach (var name in new[] { "controlledResearchHooks", "compatibilityValidated", "trustedDepthEnforced" })
+        Require(safety.GetProperty(name).ValueKind == JsonValueKind.False,
+            $"normal bundle falsely claimed research safety field {name}");
+    Require(safety.GetProperty("activeCanaries").GetInt32() == 0,
+        "normal bundle falsely claimed an active canary");
     var fileEntry = manifestRoot.GetProperty("files").EnumerateArray().First();
     Require(fileEntry.GetProperty("path").ValueKind == JsonValueKind.String
             && fileEntry.GetProperty("sizeBytes").ValueKind == JsonValueKind.Number
@@ -722,6 +958,101 @@ static async Task SnapshotCollectionSafetyAsync()
     var diagnostics = await File.ReadAllTextAsync(Path.Combine(unsafeResult.BundleDirectory, "diagnostic_summary.txt"));
     Require(diagnostics.Contains("hooksDisabled=false", StringComparison.Ordinal),
         "diagnostic summary hardcoded a hook-free claim for legacy status");
+
+    const string researchSession = "controlled-research-session";
+    var researchGame = Path.Combine(temp.Path, "research-game");
+    var researchStatusDirectory = Path.Combine(researchGame, "Mods", "CrabRuntimeProbe", "Scripts", "results");
+    Directory.CreateDirectory(researchStatusDirectory);
+    var researchExecutable = Path.Combine(researchGame, "CrabChampions.exe");
+    var ue4ss = Path.Combine(researchGame, "UE4SS.dll");
+    await File.WriteAllBytesAsync(researchExecutable, Encoding.UTF8.GetBytes("test-game-build"));
+    await File.WriteAllBytesAsync(ue4ss, Encoding.UTF8.GetBytes("test-ue4ss-build"));
+    var researchState = state with
+    {
+        SessionId = researchSession,
+        GameDirectory = researchGame,
+        ExecutablePath = researchExecutable,
+        StatusDirectory = researchStatusDirectory,
+        PreparedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-2)
+    };
+    var artifactStore = new ResearchArtifactStore();
+    var researchCatalog = await artifactStore.ReadCatalogAsync(
+        Path.Combine(package, "campaign", "hook_candidate_catalog.json"));
+    var compatibility = await new CompatibilityFingerprintService().FromInstallationAsync(
+        researchExecutable, ue4ss, researchCatalog);
+    var canaryCandidate = researchCatalog.ById[researchCatalog.PrincipalCandidateId];
+    var runId = "research-test-run";
+    var runManifest = new HookRunManifest(
+        ResearchContracts.RunManifestSchema,
+        runId,
+        researchSession,
+        generation,
+        DateTimeOffset.UtcNow,
+        ResearchRunType.CanaryOnly,
+        CampaignRole.Host,
+        compatibility,
+        true,
+        Array.Empty<HookCandidateSelection>(),
+        new HookCandidateSelection(
+            canaryCandidate.Id,
+            canaryCandidate.HookPathFingerprint,
+            HookValidationDepth.RegistrationOnly),
+        new[] { "safe-snapshot-baseline", canaryCandidate.Id },
+        false);
+    await artifactStore.WriteRunManifestAsync(
+        Path.Combine(researchStatusDirectory, $"hook_run_manifest_{runId}.json"), runManifest);
+    await File.WriteAllTextAsync(
+        Path.Combine(researchStatusDirectory, $"hook_run_consumed_{runId}.json"),
+        JsonSerializer.Serialize(new
+        {
+            schemaVersion = ResearchContracts.RunConsumedSchema,
+            runId,
+            consumedAtUtc = DateTimeOffset.UtcNow,
+            automaticRearmAllowed = false
+        }, JsonOptions()));
+    var researchStatus = StatusJson(3, DateTimeOffset.UtcNow, generation, researchSession)
+        .Replace("\"currentProbeStage\":\"observe\"",
+            "\"currentProbeStage\":\"observe\",\"activeProfile\":\"progressive-broad-observation\",\"profileId\":\"progressive-broad-observation\"",
+            StringComparison.Ordinal)
+        .Replace("\"hooksDisabled\":true", "\"hooksDisabled\":false", StringComparison.Ordinal);
+    await File.WriteAllTextAsync(
+        Path.Combine(researchStatusDirectory, "live_status.slot0.json"), researchStatus);
+    await File.WriteAllTextAsync(
+        Path.Combine(researchStatusDirectory, $"access_evidence_{researchSession}.jsonl"),
+        SnapshotRow(1, "crystals", "crystals", 10m, researchSession, generation, machine,
+            hooksDisabled: false) + "\n");
+    var researchResult = await new EvidenceCollector().CollectAsync(
+        researchState,
+        Path.Combine(temp.Path, "research-exports"),
+        resourceStartPath: package);
+    var researchBundle = JsonSerializer.Deserialize<BundleManifest>(
+        await File.ReadAllTextAsync(Path.Combine(researchResult.BundleDirectory, "bundle_manifest.json")),
+        JsonOptions())!;
+    Require(researchBundle.ProfileId == "progressive-broad-observation"
+            && researchBundle.Safety.ControlledResearchHooks
+            && researchBundle.Safety.CompatibilityValidated
+            && researchBundle.Safety.TrustedDepthEnforced
+            && researchBundle.Safety.ActiveCanaries == 1
+            && !researchBundle.Safety.HooksDisabled
+            && !researchBundle.DirtyEvidence,
+        "strict one-canary research bundle was not distinguished from unsafe or normal-mode evidence");
+    Require(Directory.EnumerateFiles(
+            Path.Combine(researchResult.BundleDirectory, "evidence", "research-redacted"),
+            "hook_run_manifest_*.json").Any()
+            && Directory.EnumerateFiles(
+                Path.Combine(researchResult.BundleDirectory, "evidence", "research-redacted"),
+                "hook_run_consumed_*.json").Any(),
+        "controlled research bundle omitted its redacted manifest or consumption marker");
+    File.Delete(Path.Combine(researchStatusDirectory, $"hook_run_consumed_{runId}.json"));
+    var unconsumedResult = await new EvidenceCollector().CollectAsync(
+        researchState,
+        Path.Combine(temp.Path, "unconsumed-research-exports"),
+        resourceStartPath: package);
+    var unconsumedBundle = JsonSerializer.Deserialize<BundleManifest>(
+        await File.ReadAllTextAsync(Path.Combine(unconsumedResult.BundleDirectory, "bundle_manifest.json")),
+        JsonOptions())!;
+    Require(unconsumedBundle.DirtyEvidence && !unconsumedBundle.Safety.ControlledResearchHooks,
+        "research evidence without a single-process consumption marker was presented as controlled");
 }
 
 static async Task CorrelationAsync()
@@ -815,12 +1146,16 @@ static async Task SourceGuardsAndFixturesAsync()
     Require(safetyRequired.SetEquals(new[]
     {
         "writesDisabled", "rpcCallsDisabled", "mutationDisabled", "rawIdentityDisabled", "hudHookDisabled",
-        "hooksDisabled", "runtimeDiscoveryDisabled", "inventoryStagesDisabled"
+        "hooksDisabled", "runtimeDiscoveryDisabled", "inventoryStagesDisabled", "controlledResearchHooks",
+        "compatibilityValidated", "trustedDepthEnforced", "activeCanaries"
     }), "evidence schema safety contract diverged");
-    foreach (var name in safetyRequired)
+    foreach (var name in safetyRequired.Where(name => name != "activeCanaries"))
         Require(schema.GetProperty("properties").GetProperty("safety").GetProperty("properties")
                 .GetProperty(name!).GetProperty("type").GetString() == "boolean",
             $"evidence schema must represent diagnostic true/false safety for {name}");
+    Require(schema.GetProperty("properties").GetProperty("safety").GetProperty("properties")
+            .GetProperty("activeCanaries").GetProperty("type").GetString() == "integer",
+        "evidence schema activeCanaries must be an integer");
 }
 
 static string CreatePackage(string root)
@@ -830,6 +1165,7 @@ static string CreatePackage(string root)
     Directory.CreateDirectory(scripts);
     File.WriteAllText(Path.Combine(scripts, "config.txt"), "enabled = false\nmode = read\nallowWriteProbes = false\n");
     Directory.CreateDirectory(Path.Combine(package, "Payload", "Mods"));
+    File.WriteAllBytes(Path.Combine(package, "Payload", "UE4SS.dll"), Array.Empty<byte>());
     File.WriteAllText(Path.Combine(package, "Payload", "Mods", "mods.txt"),
         "BPModLoaderMod : 1\nBPML_GenericFunctions : 1\nCrabRuntimeProbe : 1\n");
     var campaign = Path.Combine(package, "campaign");
@@ -840,6 +1176,14 @@ static string CreatePackage(string root)
         "{\"schemaVersion\":\"crabsync-checklist-v1\",\"entries\":[{\"id\":\"health-damage\",\"section\":\"Health\",\"label\":\"Damage\",\"nextAction\":\"Take damage\",\"completionRule\":\"qualifying-evidence\"},{\"id\":\"resource-crystal-gain\",\"section\":\"Resources and slots\",\"label\":\"Crystal gain observed\",\"nextAction\":\"Earn crystals\",\"completionRule\":\"qualifying-evidence\"}]}" );
     File.WriteAllText(Path.Combine(campaign, "crabsync-full-observe.profile.json"),
         "{\"id\":\"crabsync-full-observe\",\"safety\":{\"writesEnabled\":false,\"rpcInvocationEnabled\":false,\"propertyMutationEnabled\":false,\"hudHookEnabled\":false,\"rawIdentityEnabled\":false,\"externalRelayEnabled\":false,\"syntheticValuesEnabled\":false,\"staleUObjectRetentionEnabled\":false},\"normalMode\":{\"snapshotSamplerEnabled\":true,\"gameplayHooksEnabled\":false,\"lifecycleHooksEnabled\":false,\"runtimeDiscoveryEnabled\":false,\"inventoryEscalationEnabled\":false},\"passiveHooks\":{\"enabled\":false},\"inventoryEscalation\":{\"enabled\":false},\"runtimeDiscovery\":{\"enabled\":false}}" );
+    var repositoryCampaign = Path.Combine(FindRepoRoot(), "campaign");
+    foreach (var name in new[]
+             {
+                 "hook_candidate_catalog.json", "hook_validation_ledger.json",
+                 "trusted_hook_manifest.json", "hook_quarantine.json",
+                 "progressive_observation.defaults.json"
+             })
+        File.Copy(Path.Combine(repositoryCampaign, name), Path.Combine(campaign, name), true);
     Directory.CreateDirectory(Path.Combine(package, "schemas"));
     return package;
 }

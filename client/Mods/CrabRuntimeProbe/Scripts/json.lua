@@ -1,6 +1,7 @@
 local json = {}
 
 local ARRAY_MARKER = {}
+local NULL_MARKER = {}
 
 local function esc(s)
   s = tostring(s)
@@ -36,6 +37,7 @@ local function sequentialLength(value)
 end
 
 local function encode(value, seen, depth)
+  if value == NULL_MARKER then return 'null' end
   local kind = type(value)
   if kind == 'nil' then return 'null' end
   if kind == 'boolean' then return tostring(value) end
@@ -83,6 +85,8 @@ end
 function json.array(values)
   return setmetatable(values or {}, ARRAY_MARKER)
 end
+
+json.null = NULL_MARKER
 
 function json.encode(value)
   return encode(value, {}, 0)

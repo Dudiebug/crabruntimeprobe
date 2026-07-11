@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/hook-validation-ledger-v1.schema.json",
+  "title": "CrabRuntimeProbe hook validation ledger v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAtUtc", "updatedAtUtc", "coverageCatalogHash", "hookCatalogIdentity", "callbackImplementationVersion", "callbackSchemaVersion", "validationBehaviorVersion", "initialMigrationPolicy", "candidates"],
+  "properties": {
+    "schemaVersion": { "const": "hook-validation-ledger-v1" },
+    "generatedAtUtc": { "type": "string", "format": "date-time" },
+    "updatedAtUtc": { "type": "string", "format": "date-time" },
+    "coverageCatalogHash": { "$ref": "#/$defs/hash" },
+    "hookCatalogIdentity": { "$ref": "#/$defs/hash" },
+    "callbackImplementationVersion": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "callbackSchemaVersion": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "validationBehaviorVersion": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "initialMigrationPolicy": { "type": "string", "minLength": 1, "maxLength": 1024 },
+    "candidates": { "type": "array", "maxItems": 512, "items": { "$ref": "#/$defs/candidate" } }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "state": { "enum": ["untested", "armed", "registration-clean", "registered-not-observed", "natural-callback-clean", "provisional", "trusted", "needs-revalidation", "unsupported", "quarantined", "crash-suspect"] },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidateId", "hookPathFingerprint", "state", "highestValidatedDepth", "trustedDepth", "cleanRuns", "naturalCallbacks", "hostCleanRuns", "joinedClientCleanRuns", "lifecycleTransitionRuns", "evidenceSessions", "legacyObservationMigrated", "legacyObservationTrusted", "crashSuspectRuns", "compatibilityFingerprint", "hasUnmatchedBreadcrumb", "hasCorrelatedCrash", "hasNewUe4ssCallbackError", "reducerFixtureCovered"],
+      "properties": {
+        "candidateId": { "type": "string", "pattern": "^hook-[a-z0-9-]{3,120}$", "maxLength": 128 },
+        "hookPathFingerprint": { "$ref": "#/$defs/hash" },
+        "state": { "$ref": "#/$defs/state" },
+        "highestValidatedDepth": { "type": "integer", "minimum": 0, "maximum": 7 },
+        "trustedDepth": { "type": ["integer", "null"], "minimum": 1, "maximum": 7 },
+        "cleanRuns": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "naturalCallbacks": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+        "hostCleanRuns": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "joinedClientCleanRuns": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "lifecycleTransitionRuns": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "evidenceSessions": { "type": "array", "maxItems": 4096, "items": { "type": "string", "minLength": 1, "maxLength": 128 }, "uniqueItems": true },
+        "legacyObservationMigrated": { "type": "boolean" },
+        "legacyObservationTrusted": { "const": false },
+        "crashSuspectRuns": { "type": "array", "maxItems": 4096, "items": { "type": "string", "minLength": 1, "maxLength": 128 }, "uniqueItems": true },
+        "compatibilityFingerprint": { "oneOf": [{ "const": "" }, { "$ref": "#/$defs/hash" }] },
+        "hasUnmatchedBreadcrumb": { "type": "boolean" },
+        "hasCorrelatedCrash": { "type": "boolean" },
+        "hasNewUe4ssCallbackError": { "type": "boolean" },
+        "reducerFixtureCovered": { "type": "boolean" }
+      }
+    }
+  }
+}

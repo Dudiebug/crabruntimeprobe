@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "sequence": 21,
+  "writtenAtUtc": "2026-07-11T18:00:00Z",
+  "heartbeatAtUtc": "2026-07-11T18:00:00Z",
+  "campaignId": "crabsync-full-observe",
+  "campaignName": "Warming fixture",
+  "campaignGeneration": 77,
+  "machineId": "fixture-machine",
+  "sessionId": "fixture-session",
+  "selectedRole": "host",
+  "observedRole": "host",
+  "authorityStatus": "runtime-authority",
+  "lifecycle": {
+    "state": "warming",
+    "generation": 3,
+    "context": "in-run",
+    "stable": false,
+    "stabilityReady": false,
+    "stableSamples": 6,
+    "stableSamplesRequired": 10,
+    "stableDwellSeconds": 18,
+    "stableDwellSecondsRequired": 30
+  },
+  "runtime": {
+    "gameProcessRunning": true,
+    "gameProcessState": "running",
+    "ue4ssState": "loaded",
+    "runtimeProbeState": "active",
+    "runtimeProbeLoaded": true,
+    "currentProbeStage": "snapshot:waiting-for-stable-game",
+    "activeProfile": "crabsync-full-observe",
+    "collectionReady": false,
+    "stopRequested": false,
+    "evidenceSequence": 8
+  },
+  "safety": {
+    "writesDisabled": true,
+    "rpcsDisabled": true,
+    "mutationDisabled": true,
+    "hudHookDisabled": true,
+    "rawIdentityDisabled": true,
+    "hooksDisabled": true,
+    "runtimeDiscoveryDisabled": true,
+    "inventoryStagesDisabled": true,
+    "inventoryDepth": 0,
+    "circuitBreakers": {}
+  },
+  "checklist": {},
+  "evidenceHealth": { "state": "healthy", "canonicalRows": 8, "rejectedRows": 0, "dirtyRows": 0 },
+  "crashSuspected": false,
+  "dirtyEvidence": false
+}

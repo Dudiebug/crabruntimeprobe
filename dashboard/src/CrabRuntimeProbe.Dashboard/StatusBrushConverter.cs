@@ -24,10 +24,10 @@ public sealed class StatusBrushConverter : IValueConverter
                 : boolean ? Green : Red;
         }
         var text = value?.ToString()?.Trim().ToLowerInvariant() ?? string.Empty;
-        if (Contains(text, "retry", "crash", "dirty", "error", "failed", "unsafe")) return Red;
-        if (Contains(text, "waiting", "partial", "stale", "warning", "needs", "blocked")) return Yellow;
-        if (Contains(text, "inprogress", "in-progress", "observing", "monitoring", "loaded", "running")) return Blue;
-        if (Contains(text, "done", "confirmed", "complete", "healthy", "clean", "stable", "safe")) return Green;
+        if (Contains(text, "retry", "crash", "dirty", "error", "failed", "faulted", "unsafe")) return Red;
+        if (Contains(text, "waiting", "warming", "partial", "stale", "warning", "needs", "blocked", "notobservable", "not-observable")) return Yellow;
+        if (Contains(text, "collecting", "inprogress", "in-progress", "observing", "monitoring", "loaded", "running")) return Blue;
+        if (Contains(text, "ready", "done", "confirmed", "complete", "healthy", "clean", "stable", "safe")) return Green;
         return Gray;
     }
 

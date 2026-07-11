@@ -34,6 +34,17 @@ foreach ($file in @(
   "Payload\Mods\CrabRuntimeProbe\Scripts\campaign_state.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\status_writer.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\snapshot_sampler.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\research_hook_catalog.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\progressive_json_reader.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\progressive_artifact_guard.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\progressive_config.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\progressive_breadcrumb_journal.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\progressive_run_manifest.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\progressive_depth_callbacks.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\progressive_hook_runner.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\progressive_observe_coordinator.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\relic_count_validator.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\build_info.txt",
   "Payload\Mods\CrabRuntimeProbe\Scripts\passive_hook_manager.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\inventory_stage_manager.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\full_observe_coordinator.lua",
@@ -41,14 +52,30 @@ foreach ($file in @(
   "campaign\crabsync-full-observe.profile.json",
   "campaign\crabsync-full-observe.checklist.json",
   "campaign\crabsync_coverage_catalog.json",
+  "campaign\hook_candidate_catalog.json",
+  "campaign\hook_validation_ledger.json",
+  "campaign\trusted_hook_manifest.json",
+  "campaign\hook_quarantine.json",
+  "campaign\progressive_observation.defaults.json",
   "schemas\live-status-v1.schema.json",
   "schemas\campaign-control-v1.schema.json",
   "schemas\evidence-bundle-v1.schema.json",
   "schemas\coverage-catalog-v1.schema.json",
   "schemas\snapshot-observation-v1.schema.json",
+  "schemas\compatibility-fingerprint-v1.schema.json",
+  "schemas\hook-breadcrumb-v1.schema.json",
+  "schemas\hook-candidate-catalog-v1.schema.json",
+  "schemas\hook-quarantine-v1.schema.json",
+  "schemas\hook-run-classification-v1.schema.json",
+  "schemas\hook-run-consumed-v1.schema.json",
+  "schemas\hook-run-manifest-v1.schema.json",
+  "schemas\hook-validation-ledger-v1.schema.json",
+  "schemas\trusted-hook-manifest-v1.schema.json",
   "docs\CRABSYNC_FULL_CAMPAIGN_GUIDE.md",
   "docs\CRABSYNC_COVERAGE_CATALOG.md",
   "docs\INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md",
+  "docs\CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md",
+  "CHANGELOG.md",
   "LICENSE",
   "UE4SS-LICENSE.txt",
   "THIRD_PARTY_NOTICES.md",
@@ -82,9 +109,81 @@ if (Test-Path -LiteralPath $profilePath -PathType Leaf) {
   }
 }
 
+$progressiveArtifactPaths = [ordered]@{
+  candidateCatalog = "campaign\hook_candidate_catalog.json"
+  validationLedger = "campaign\hook_validation_ledger.json"
+  trustedManifest = "campaign\trusted_hook_manifest.json"
+  quarantine = "campaign\hook_quarantine.json"
+  defaults = "campaign\progressive_observation.defaults.json"
+}
+$progressiveArtifacts = @{}
+foreach ($entry in $progressiveArtifactPaths.GetEnumerator()) {
+  $artifactPath = Join-Path $BundleRoot $entry.Value
+  if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) { continue }
+  try {
+    $progressiveArtifacts[$entry.Key] = Get-Content -Raw -LiteralPath $artifactPath | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    Add-Problem "Invalid progressive artifact $($entry.Value): $($_.Exception.Message)"
+  }
+}
+if ($progressiveArtifacts.Count -eq $progressiveArtifactPaths.Count) {
+  $candidateCatalog = $progressiveArtifacts.candidateCatalog
+  $validationLedger = $progressiveArtifacts.validationLedger
+  $trustedManifest = $progressiveArtifacts.trustedManifest
+  $quarantine = $progressiveArtifacts.quarantine
+  $defaults = $progressiveArtifacts.defaults
+  foreach ($artifact in @($validationLedger, $trustedManifest, $quarantine, $defaults)) {
+    if ([string]$artifact.coverageCatalogHash -ne [string]$candidateCatalog.coverageCatalogHash -or
+        [string]$artifact.hookCatalogIdentity -ne [string]$candidateCatalog.hookCatalogIdentity -or
+        [string]$artifact.callbackImplementationVersion -ne [string]$candidateCatalog.callbackImplementationVersion -or
+        [string]$artifact.callbackSchemaVersion -ne [string]$candidateCatalog.callbackSchemaVersion -or
+        [string]$artifact.validationBehaviorVersion -ne [string]$candidateCatalog.validationBehaviorVersion) {
+      Add-Problem 'Progressive campaign artifacts do not share the same compatibility identities.'
+      break
+    }
+  }
+  if ($candidateCatalog.candidateCount -ne 111 -or @($candidateCatalog.candidates).Count -ne 111) {
+    Add-Problem 'Release hook candidate catalog must contain the preserved 111 candidates.'
+  }
+  if ([string]$candidateCatalog.principalCandidateId -ne 'hook-crabps-onrep-islandrewardrarity' -or
+      [string]$defaults.initialCanaryCandidateId -ne 'hook-crabps-onrep-islandrewardrarity' -or
+      [int]$defaults.initialCanaryDepth -ne 1) {
+    Add-Problem 'Release must recommend OnRep_IslandRewardRarity at registration-only depth 1 first.'
+  }
+  if (@($trustedManifest.candidates).Count -ne 0 -or
+      -not [string]::IsNullOrWhiteSpace([string]$trustedManifest.compatibilityFingerprint) -or
+      $defaults.trustedPoolInitiallyEmpty -ne $true) {
+    Add-Problem 'Release must ship with an empty, compatibility-unassigned trusted-hook manifest.'
+  }
+  if (@($quarantine.entries).Count -ne 0) {
+    Add-Problem 'Release quarantine defaults must not contain developer or field-test state.'
+  }
+  if (@($validationLedger.candidates | Where-Object { $null -ne $_.trustedDepth }).Count -ne 0) {
+    Add-Problem 'Release validation ledger must not pretrust any candidate depth.'
+  }
+  $nonBaselineLedgerEntries = @($validationLedger.candidates | Where-Object {
+    ([string]$_.state) -ne 'untested' -or [int]$_.highestValidatedDepth -ne 0 -or
+    $null -ne $_.trustedDepth -or [int]$_.cleanRuns -ne 0 -or [int]$_.naturalCallbacks -ne 0 -or
+    @($_.evidenceSessions).Count -ne 0 -or @($_.crashSuspectRuns).Count -ne 0 -or
+    -not [string]::IsNullOrWhiteSpace([string]$_.compatibilityFingerprint) -or
+    $_.hasUnmatchedBreadcrumb -eq $true -or $_.hasCorrelatedCrash -eq $true -or
+    $_.hasNewUe4ssCallbackError -eq $true
+  })
+  if ($nonBaselineLedgerEntries.Count -ne 0) {
+    Add-Problem 'Release validation ledger must contain only clean untested migration-baseline entries.'
+  }
+  if ($defaults.normalPlayGuideHookFree -ne $true -or
+      $defaults.automaticInProcessAdvance -ne $false -or
+      $defaults.maximumCanariesPerProcess -ne 1 -or
+      @($defaults.registrationOrder)[-1] -ne 'canary-last') {
+    Add-Problem 'Progressive defaults must keep normal mode hook-free, one canary maximum, no in-process advance, and canary-last ordering.'
+  }
+}
+
 $forbidden = Get-ChildItem -LiteralPath $BundleRoot -Recurse -Force | Where-Object {
   $_.Name -in @(".git", "node_modules", "objectdump", "server", "results", "CrabInventorySync") -or
   (-not $_.PSIsContainer -and ($_.Name -match '\.(jsonl|log|dmp|dump|tmp)$' -or
+    $_.Name -match '^hook_run_(?:consumed|manifest|classification)_.*\.json$' -or
     $_.Name -match '(?i)(UE4SS[_-]?ObjectDump|ObjectDump).*\.txt$'))
 }
 foreach ($item in $forbidden) {
@@ -104,7 +203,12 @@ if (Test-Path -LiteralPath $configPath) {
     "fullObserveEnabled = false",
     "allowPassiveObservationHooks = false",
     "allowFullObserveInventoryStages = false",
-    "allowFullObserveRuntimeDiscovery = false"
+    "allowFullObserveRuntimeDiscovery = false",
+    "progressiveObservationEnabled = false",
+    "canaryCandidateId = unassigned",
+    "canaryHookPathFingerprint = unassigned",
+    "canaryValidationDepth = 0",
+    "relicCountValidationEnabled = false"
   )) {
     if ($config -notmatch [regex]::Escape($safeDefault)) { Add-Problem "Unsafe or missing config default: $safeDefault" }
   }
@@ -112,6 +216,10 @@ if (Test-Path -LiteralPath $configPath) {
     Assert-CrabRuntimeProbeConfig -ConfigPath $configPath -Label 'release payload config'
   } catch {
     Add-Problem $_.Exception.Message
+  }
+  $trustedHooksDefault = Get-CrabRuntimeProbeConfigValue -ConfigPath $configPath -Key 'trustedCandidateSelections'
+  if (-not [string]::IsNullOrWhiteSpace($trustedHooksDefault)) {
+    Add-Problem 'Release payload config must ship with trustedCandidateSelections empty.'
   }
 }
 
@@ -166,6 +274,80 @@ foreach ($safetySchemaRelative in @(
   }
 }
 
+$evidenceBundleSchemaPath = Join-Path $BundleRoot 'schemas\evidence-bundle-v1.schema.json'
+if (Test-Path -LiteralPath $evidenceBundleSchemaPath -PathType Leaf) {
+  try {
+    $evidenceBundleSchema = Get-Content -Raw -LiteralPath $evidenceBundleSchemaPath | ConvertFrom-Json -ErrorAction Stop
+    foreach ($field in @('controlledResearchHooks', 'compatibilityValidated', 'trustedDepthEnforced')) {
+      if (@($evidenceBundleSchema.properties.safety.required) -notcontains $field -or
+          $evidenceBundleSchema.properties.safety.properties.$field.type -ne 'boolean') {
+        Add-Problem "Evidence-bundle safety must require boolean $field."
+      }
+    }
+    $activeCanariesSchema = $evidenceBundleSchema.properties.safety.properties.activeCanaries
+    if (@($evidenceBundleSchema.properties.safety.required) -notcontains 'activeCanaries' -or
+        $activeCanariesSchema.type -ne 'integer' -or
+        [int]$activeCanariesSchema.minimum -ne 0 -or [int]$activeCanariesSchema.maximum -ne 1) {
+      Add-Problem 'Evidence-bundle safety must require integer activeCanaries in the range 0..1.'
+    }
+    $normalRule = @($evidenceBundleSchema.allOf | Where-Object {
+      [string]$_.'if'.properties.profileId.const -eq 'crabsync-full-observe'
+    }) | Select-Object -First 1
+    $researchRule = @($evidenceBundleSchema.allOf | Where-Object {
+      [string]$_.'if'.properties.profileId.const -eq 'progressive-broad-observation'
+    }) | Select-Object -First 1
+    $normalSafety = $normalRule.then.properties.safety.properties
+    $researchSafety = $researchRule.then.properties.safety.properties
+    if ($null -eq $normalRule -or $normalSafety.hooksDisabled.const -ne $true -or
+        $normalSafety.controlledResearchHooks.const -ne $false -or
+        $normalSafety.compatibilityValidated.const -ne $false -or
+        $normalSafety.trustedDepthEnforced.const -ne $false -or
+        [int]$normalSafety.activeCanaries.const -ne 0) {
+      Add-Problem 'Evidence-bundle normal profile must require all hooks disabled and research safety false/false/false/0.'
+    }
+    if ($null -eq $researchRule -or $researchSafety.writesDisabled.const -ne $true -or
+        $researchSafety.rpcCallsDisabled.const -ne $true -or
+        $researchSafety.mutationDisabled.const -ne $true -or
+        $researchSafety.rawIdentityDisabled.const -ne $true -or
+        $researchSafety.hudHookDisabled.const -ne $true -or
+        $researchSafety.runtimeDiscoveryDisabled.const -ne $true -or
+        $researchSafety.inventoryStagesDisabled.const -ne $true -or
+        $researchSafety.controlledResearchHooks.const -ne $true -or
+        $researchSafety.compatibilityValidated.const -ne $true -or
+        $researchSafety.trustedDepthEnforced.const -ne $true) {
+      Add-Problem 'Evidence-bundle progressive profile must require controlled, compatible, depth-enforced hooks with all non-hook mutation/discovery paths disabled.'
+    }
+  } catch {
+    Add-Problem "Invalid mode-aware evidence-bundle safety schema: $($_.Exception.Message)"
+  }
+}
+
+$progressiveSchemaIdentities = [ordered]@{
+  "schemas\compatibility-fingerprint-v1.schema.json" = "compatibility-fingerprint-v1"
+  "schemas\hook-breadcrumb-v1.schema.json" = "hook-breadcrumb-v1"
+  "schemas\hook-candidate-catalog-v1.schema.json" = "hook-candidate-catalog-v1"
+  "schemas\hook-quarantine-v1.schema.json" = "hook-quarantine-v1"
+  "schemas\hook-run-classification-v1.schema.json" = "hook-run-classification-v1"
+  "schemas\hook-run-consumed-v1.schema.json" = "hook-run-consumed-v1"
+  "schemas\hook-run-manifest-v1.schema.json" = "hook-run-manifest-v1"
+  "schemas\hook-validation-ledger-v1.schema.json" = "hook-validation-ledger-v1"
+  "schemas\trusted-hook-manifest-v1.schema.json" = "trusted-hook-manifest-v1"
+}
+foreach ($entry in $progressiveSchemaIdentities.GetEnumerator()) {
+  $schemaPath = Join-Path $BundleRoot $entry.Key
+  if (-not (Test-Path -LiteralPath $schemaPath -PathType Leaf)) { continue }
+  try {
+    $schema = Get-Content -Raw -LiteralPath $schemaPath | ConvertFrom-Json -ErrorAction Stop
+    if ([string]$schema.'$schema' -ne 'https://json-schema.org/draft/2020-12/schema' -or
+        [string]$schema.properties.schemaVersion.const -ne $entry.Value -or
+        $schema.additionalProperties -ne $false) {
+      Add-Problem "$($entry.Key) does not enforce the expected closed $($entry.Value) contract."
+    }
+  } catch {
+    Add-Problem "Invalid progressive schema $($entry.Key): $($_.Exception.Message)"
+  }
+}
+
 $mainLuaPath = Join-Path $BundleRoot "Payload\Mods\CrabRuntimeProbe\Scripts\main.lua"
 $autoStartLuaPath = Join-Path $BundleRoot "Payload\Mods\CrabRuntimeProbe\Scripts\dashboard_autostart.lua"
 if ((Test-Path -LiteralPath $mainLuaPath -PathType Leaf) -and
@@ -187,8 +369,62 @@ $manifestPath = Join-Path $BundleRoot "version-manifest.json"
 if (Test-Path -LiteralPath $manifestPath) {
   try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } catch { Add-Problem "Invalid version-manifest.json: $($_.Exception.Message)" }
   if ($null -ne $manifest) {
+    if ($manifest.schemaVersion -ne 1 -or [string]$manifest.product -ne 'CrabRuntimeProbe' -or
+        [string]$manifest.version -notmatch '^1\.0\.4(?:[-+][0-9A-Za-z.-]+)?$' -or
+        [string]$manifest.runtime -ne 'win-x64' -or
+        [string]::IsNullOrWhiteSpace([string]$manifest.commit)) {
+      Add-Problem 'Version manifest must identify CrabRuntimeProbe v1.0.4, win-x64, schema 1, and a source commit.'
+    }
+    $expectedBundleName = "CrabRuntimeProbe-v$($manifest.version)-$($manifest.runtime)"
+    if ((Split-Path -Leaf $BundleRoot) -ne $expectedBundleName) {
+      Add-Problem "Bundle directory name must match version manifest: $expectedBundleName"
+    }
     if ($manifest.snapshotObservationSchemaVersion -ne 1) {
       Add-Problem "Version manifest must declare snapshotObservationSchemaVersion=1."
+    }
+    $baseSchemaIdentities = [ordered]@{
+      liveStatus = 'live-status-v1'
+      snapshotObservation = 'snapshot-observation-v1'
+      campaignControl = 'campaign-control-v1'
+      evidenceBundle = 'evidence-bundle-v1'
+      coverageCatalog = 'coverage-catalog-v1'
+    }
+    foreach ($baseIdentity in $baseSchemaIdentities.GetEnumerator()) {
+      if ([string]$manifest.schemaIdentities.($baseIdentity.Key) -ne [string]$baseIdentity.Value) {
+        Add-Problem "Version manifest schema identity missing or wrong: $($baseIdentity.Key)=$($baseIdentity.Value)"
+      }
+    }
+    foreach ($entry in $progressiveSchemaIdentities.GetEnumerator()) {
+      $identityProperty = switch ($entry.Value) {
+        'compatibility-fingerprint-v1' { 'compatibilityFingerprint' }
+        'hook-breadcrumb-v1' { 'hookBreadcrumb' }
+        'hook-candidate-catalog-v1' { 'hookCandidateCatalog' }
+        'hook-quarantine-v1' { 'hookQuarantine' }
+        'hook-run-classification-v1' { 'hookRunClassification' }
+        'hook-run-consumed-v1' { 'hookRunConsumed' }
+        'hook-run-manifest-v1' { 'hookRunManifest' }
+        'hook-validation-ledger-v1' { 'hookValidationLedger' }
+        'trusted-hook-manifest-v1' { 'trustedHookManifest' }
+      }
+      if ([string]$manifest.schemaIdentities.$identityProperty -ne $entry.Value) {
+        Add-Problem "Version manifest schema identity missing or wrong: $identityProperty=$($entry.Value)"
+      }
+    }
+    if ($manifest.releaseSafety.normalPlayGuideHookFree -ne $true -or
+        $manifest.releaseSafety.trustedManifestCandidateCount -ne 0 -or
+        $manifest.releaseSafety.canaryPrearmed -ne $false -or
+        $manifest.releaseSafety.maximumCanariesPerProcess -ne 1 -or
+        $manifest.releaseSafety.automaticInProcessAdvance -ne $false) {
+      Add-Problem 'Version manifest releaseSafety must declare hook-free normal mode, empty trust, no prearmed canary, one-canary maximum, and no in-process advance.'
+    }
+    if ($progressiveArtifacts.Count -eq $progressiveArtifactPaths.Count) {
+      if ([string]$manifest.campaignIdentities.coverageCatalogHash -ne [string]$progressiveArtifacts.candidateCatalog.coverageCatalogHash -or
+          [string]$manifest.campaignIdentities.hookCatalogIdentity -ne [string]$progressiveArtifacts.candidateCatalog.hookCatalogIdentity -or
+          [string]$manifest.campaignIdentities.callbackImplementationVersion -ne [string]$progressiveArtifacts.candidateCatalog.callbackImplementationVersion -or
+          [string]$manifest.campaignIdentities.callbackSchemaVersion -ne [string]$progressiveArtifacts.candidateCatalog.callbackSchemaVersion -or
+          [string]$manifest.campaignIdentities.validationBehaviorVersion -ne [string]$progressiveArtifacts.candidateCatalog.validationBehaviorVersion) {
+        Add-Problem 'Version manifest campaign identities do not match the packaged progressive catalog.'
+      }
     }
     $manifestPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in @($manifest.files)) {
@@ -215,6 +451,28 @@ if (Test-Path -LiteralPath $manifestPath) {
       $relative = $_.FullName.Substring($BundleRoot.Length).TrimStart('\').Replace('\', '/')
       if ($relative -ne 'version-manifest.json' -and -not $manifestPaths.Contains($relative)) {
         Add-Problem "File missing from version manifest: $relative"
+      }
+    }
+
+    $buildInfoPath = Join-Path $BundleRoot 'Payload\Mods\CrabRuntimeProbe\Scripts\build_info.txt'
+    if (Test-Path -LiteralPath $buildInfoPath -PathType Leaf) {
+      $buildInfo = Get-Content -Raw -LiteralPath $buildInfoPath
+      if ($buildInfo -notmatch "(?m)^action\s*=\s*release\s*$" -or
+          $buildInfo -notmatch "(?m)^product_version\s*=\s*$([regex]::Escape([string]$manifest.version))\s*$" -or
+          $buildInfo -notmatch "(?m)^git_commit\s*=\s*$([regex]::Escape([string]$manifest.commit))\s*$" -or
+          $buildInfo -match '(?im)^source_repo_path\s*=|[A-Z]:\\Users\\') {
+        Add-Problem 'Packaged build_info.txt is missing sanitized release/version/commit fields or leaks a local path.'
+      }
+    }
+
+    $dashboardPath = Join-Path $BundleRoot 'CrabRuntimeProbe.Dashboard.exe'
+    if (Test-Path -LiteralPath $dashboardPath -PathType Leaf) {
+      $versionCore = ([string]$manifest.version -split '[-+]')[0]
+      $expectedFileVersion = "$versionCore.0"
+      $versionInfo = (Get-Item -LiteralPath $dashboardPath).VersionInfo
+      if ([string]$versionInfo.FileVersion -ne $expectedFileVersion -or
+          -not ([string]$versionInfo.ProductVersion).StartsWith([string]$manifest.version, [StringComparison]::Ordinal)) {
+        Add-Problem "Dashboard binary version must match release $($manifest.version); got FileVersion=$($versionInfo.FileVersion), ProductVersion=$($versionInfo.ProductVersion)."
       }
     }
   }

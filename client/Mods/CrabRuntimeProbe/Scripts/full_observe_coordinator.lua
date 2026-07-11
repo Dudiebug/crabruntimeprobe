@@ -187,6 +187,7 @@ function coordinator.new(sessionId, config, safe, evidenceWriter)
       rawIdentityEvidence = false,
       passiveOnly = true
     })
+    if self.config.progressiveHooksArmed == true then row.hooksDisabled = false end
     local writeOk = self.evidenceWriter:writeEvidence(row)
     self.state:noteWriteResult(writeOk)
   end
@@ -204,6 +205,11 @@ function coordinator.new(sessionId, config, safe, evidenceWriter)
 
     self.active = true
     self.state.lifecycleState = 'warming'
+    if self.config.progressiveObservationEnabled ~= true then
+      self.state.activeProfile = 'normal-play-guide'
+      self.state.workflow = 'normal-play-guide'
+    end
+    self.state.collectionReadiness = 'warming'
     self.state.probeStage = 'snapshot:waiting-for-stable-game'
     self:resetStability('startup stability barrier required')
     self.snapshots:setActive(true)
@@ -325,6 +331,9 @@ function coordinator.new(sessionId, config, safe, evidenceWriter)
 
     if self.stableReady and self.state.lifecycleState == 'stable' then
       local outcome = self.snapshots:onTick()
+      if type(self.snapshots.isBaselineReady) == 'function' and self.snapshots:isBaselineReady() then
+        self.state.collectionReadiness = self.config.progressiveHooksArmed == true and 'collecting' or 'ready'
+      end
       if outcome and outcome.scopeLost == true then
         self:resetStability('snapshot scope changed during category read')
         self.state.lifecycleState = 'warming'
