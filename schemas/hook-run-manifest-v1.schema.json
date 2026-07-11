@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/hook-run-manifest-v1.schema.json",
+  "title": "CrabRuntimeProbe progressive hook run manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "sessionId", "campaignGeneration", "createdAtUtc", "runType", "selectedRole", "compatibility", "safeSnapshotBaseline", "trustedCandidates", "canary", "registrationOrder", "automaticInProcessAdvance", "safety"],
+  "properties": {
+    "schemaVersion": { "const": "hook-run-manifest-v1" },
+    "runId": { "$ref": "#/$defs/id" },
+    "sessionId": { "$ref": "#/$defs/id" },
+    "campaignGeneration": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "createdAtUtc": { "type": "string", "format": "date-time", "maxLength": 64 },
+    "runType": { "enum": ["trusted-pool-only", "canary-only", "combined"] },
+    "selectedRole": { "enum": ["host", "joined-client"] },
+    "compatibility": { "$ref": "compatibility-fingerprint-v1.schema.json" },
+    "safeSnapshotBaseline": { "const": true },
+    "trustedCandidates": { "type": "array", "maxItems": 111, "uniqueItems": true, "items": { "$ref": "#/$defs/selection" } },
+    "canary": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/selection" }] },
+    "registrationOrder": { "type": "array", "minItems": 1, "maxItems": 114, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+    "automaticInProcessAdvance": { "const": false },
+    "safety": {
+      "type": "object", "additionalProperties": false,
+      "required": ["readOnly", "invokeFunctions", "invokeRpcs", "manualOnRep", "mutation", "runtimeDiscovery", "freeFormHookPath", "maximumCanaries"],
+      "properties": {
+        "readOnly": { "const": true }, "invokeFunctions": { "const": false }, "invokeRpcs": { "const": false }, "manualOnRep": { "const": false }, "mutation": { "const": false }, "runtimeDiscovery": { "const": false }, "freeFormHookPath": { "const": false }, "maximumCanaries": { "const": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Za-z0-9_-]+$" },
+    "selection": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidateId", "hookPathFingerprint", "validationDepth"],
+      "properties": {
+        "candidateId": { "type": "string", "pattern": "^hook-[a-z0-9-]{3,120}$", "maxLength": 128 },
+        "hookPathFingerprint": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "validationDepth": { "type": "integer", "minimum": 1, "maximum": 7 }
+      }
+    }
+  },
+  "allOf": [
+    { "if": { "properties": { "runType": { "const": "trusted-pool-only" } } }, "then": { "properties": { "canary": { "type": "null" } } } },
+    { "if": { "properties": { "runType": { "enum": ["canary-only", "combined"] } } }, "then": { "properties": { "canary": { "$ref": "#/$defs/selection" } } } }
+  ]
+}

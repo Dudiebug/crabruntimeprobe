@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { spawnSync } = require('child_process');
 
 const root = process.cwd();
 const distDir = path.join(root, 'dist');
-const defaultZip = path.join(distDir, 'CrabRuntimeProbe-ue4ss.zip');
+const releaseVersion = '1.1.0';
+const defaultZip = path.join(distDir, `CrabRuntimeProbe-v${releaseVersion}-UE4SS.zip`);
 const supportMods = ['BPML_GenericFunctions', 'BPModLoaderMod', 'Keybinds', 'shared'];
 const rootRuntimeFiles = ['UE4SS.dll', 'dwmapi.dll', 'UE4SS-settings.ini', 'imgui.ini'];
 
@@ -38,6 +40,15 @@ function runCommand(command, args) {
   if (result.status !== 0) fail(`${command} failed with status ${result.status}`);
 }
 
+function gitValue(args) {
+  const result = spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' });
+  return result.status === 0 && result.stdout.trim() ? result.stdout.trim().split(/\r?\n/)[0] : 'unavailable';
+}
+
+function sha256(file) {
+  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
 function copyFileIfExists(src, dest, required = true) {
   if (!fs.existsSync(src)) {
     if (required) fail(`Missing required template file: ${src}`);
@@ -58,6 +69,7 @@ function copyDir(src, dest) {
       return !parts.includes('.git')
         && !parts.includes('node_modules')
         && !parts.includes('results')
+        && !/^hook_run_(?:consumed|manifest|classification)_.*\.json$/i.test(base)
         && !/\.(jsonl|log|dump|tmp)$/i.test(base);
     }
   });
@@ -108,9 +120,17 @@ function writeInstallTxt(stagingDir) {
     'Extract ZIP contents into:',
     'Crab Champions\\CrabChampions\\Binaries\\Win64',
     '',
-    'First run should use mode = observe.',
+    'For a clean install, remove an older Mods\\CrabRuntimeProbe folder first.',
+    'Do not reuse prior runtime configuration, campaign manifests, or trust data.',
+    '',
+    'Normal Play Guide is hook-free. Progressive Broad Observation ships with',
+    'an empty trusted pool and no prearmed canary.',
     '',
     'Deep inventory, InventoryInfo, health, write, and RPC probes are disabled by default.',
+    '',
+    'The opt-in CrabSync Readiness Campaign is local-only: it does not enumerate',
+    'remote PlayerState objects, traverse inventory, or provide transport/sync/apply',
+    'behavior. See docs\\CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md before field testing.',
     '',
     'UE4SS is redistributed under UE4SS-LICENSE.txt.',
     '',
@@ -144,6 +164,14 @@ function verifyNoForbiddenFiles(stagingDir) {
       const full = path.join(dir, entry.name);
       const rel = path.relative(stagingDir, full).replace(/\\/g, '/');
       if (forbidden.some((item) => rel === item || rel.startsWith(`${item}/`) || rel.includes(`/${item}/`))) {
+        violations.push(rel);
+        continue;
+      }
+      if (entry.isFile() && /(?:UE4SS[_-]?ObjectDump|ObjectDump).*\.txt$/i.test(entry.name)) {
+        violations.push(rel);
+        continue;
+      }
+      if (entry.isFile() && /^hook_run_(?:consumed|manifest|classification)_.*\.json$/i.test(entry.name)) {
         violations.push(rel);
         continue;
       }
@@ -209,17 +237,115 @@ function main() {
   }
 
   copyDir(path.join(root, 'client', 'Mods', 'CrabRuntimeProbe'), path.join(stagingMods, 'CrabRuntimeProbe'));
+  copyDir(path.join(root, 'campaign'), path.join(stagingDir, 'campaign'));
+  copyDir(path.join(root, 'schemas'), path.join(stagingDir, 'schemas'));
+  for (const doc of [
+    'CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md',
+    'CRABSYNC_FULL_CAMPAIGN_GUIDE.md',
+    'CRABSYNC_COVERAGE_CATALOG.md',
+    'INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md',
+    'CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md'
+  ]) {
+    copyFileIfExists(path.join(root, 'docs', doc), path.join(stagingDir, 'docs', doc), true);
+  }
+  copyFileIfExists(path.join(root, 'CHANGELOG.md'), path.join(stagingDir, 'CHANGELOG.md'), true);
+  copyFileIfExists(path.join(root, 'THIRD_PARTY_NOTICES.md'), path.join(stagingDir, 'THIRD_PARTY_NOTICES.md'), true);
   writeModsTxt(stagingMods);
   writeInstallTxt(stagingDir);
+
+  const requiredCampaignArtifacts = [
+    'hook_candidate_catalog.json',
+    'hook_validation_ledger.json',
+    'trusted_hook_manifest.json',
+    'hook_quarantine.json',
+    'progressive_observation.defaults.json'
+  ];
+  for (const artifactName of requiredCampaignArtifacts) {
+    const artifactPath = path.join(stagingDir, 'campaign', artifactName);
+    if (!fs.existsSync(artifactPath)) fail(`Missing required progressive campaign artifact: ${artifactName}`);
+  }
+  const requiredReadinessSchemas = [
+    'readiness-campaign-manifest-v1.schema.json',
+    'peer-snapshot-v1.schema.json',
+    'terminal-lifecycle-v1.schema.json'
+  ];
+  for (const schemaName of requiredReadinessSchemas) {
+    if (!fs.existsSync(path.join(stagingDir, 'schemas', schemaName))) {
+      fail(`Missing required readiness schema: ${schemaName}`);
+    }
+  }
+  const candidateCatalog = JSON.parse(fs.readFileSync(path.join(stagingDir, 'campaign', 'hook_candidate_catalog.json'), 'utf8'));
+  const defaults = JSON.parse(fs.readFileSync(path.join(stagingDir, 'campaign', 'progressive_observation.defaults.json'), 'utf8'));
+  const trusted = JSON.parse(fs.readFileSync(path.join(stagingDir, 'campaign', 'trusted_hook_manifest.json'), 'utf8'));
+  if (trusted.candidates.length !== 0 || defaults.trustedPoolInitiallyEmpty !== true ||
+      defaults.maximumCanariesPerProcess !== 1 || defaults.automaticInProcessAdvance !== false) {
+    fail('Release defaults must be empty-trust, one-canary, and no in-process advance.');
+  }
+  const commit = gitValue(['rev-parse', 'HEAD']);
+  const branch = gitValue(['branch', '--show-current']);
+  const generatedAtUtc = new Date().toISOString();
+  fs.writeFileSync(path.join(stagingMods, 'CrabRuntimeProbe', 'Scripts', 'build_info.txt'), [
+    'action = release',
+    `product_version = ${releaseVersion}`,
+    `git_commit = ${commit}`,
+    `git_branch = ${branch}`,
+    `timestamp = ${generatedAtUtc}`,
+    ''
+  ].join('\n'));
   verifyNoForbiddenFiles(stagingDir);
+
+  const manifestFiles = listFiles(stagingDir).map((relative) => {
+    const file = path.join(stagingDir, ...relative.split('/'));
+    return { path: relative, size: fs.statSync(file).size, sha256: sha256(file) };
+  });
+  const versionManifest = {
+    schemaVersion: 1,
+    product: 'CrabRuntimeProbe',
+    version: releaseVersion,
+    runtime: 'win-x64',
+    bundleFormat: 'ue4ss-overlay',
+    commit,
+    generatedAtUtc,
+    schemaIdentities: {
+      liveStatus: 'live-status-v1', snapshotObservation: 'snapshot-observation-v1',
+      campaignControl: 'campaign-control-v1', evidenceBundle: 'evidence-bundle-v1',
+      coverageCatalog: 'coverage-catalog-v1', compatibilityFingerprint: 'compatibility-fingerprint-v1',
+      readinessCampaignManifest: 'readiness-campaign-manifest-v1', peerSnapshot: 'peer-snapshot-v1',
+      terminalLifecycle: 'terminal-lifecycle-v1',
+      hookBreadcrumb: 'hook-breadcrumb-v1', hookCandidateCatalog: 'hook-candidate-catalog-v1',
+      hookQuarantine: 'hook-quarantine-v1', hookRunClassification: 'hook-run-classification-v1',
+      hookRunConsumed: 'hook-run-consumed-v1',
+      hookRunManifest: 'hook-run-manifest-v1', hookValidationLedger: 'hook-validation-ledger-v1',
+      trustedHookManifest: 'trusted-hook-manifest-v1'
+    },
+    campaignIdentities: {
+      coverageCatalogHash: candidateCatalog.coverageCatalogHash,
+      hookCatalogIdentity: candidateCatalog.hookCatalogIdentity,
+      callbackImplementationVersion: candidateCatalog.callbackImplementationVersion,
+      callbackSchemaVersion: candidateCatalog.callbackSchemaVersion,
+      validationBehaviorVersion: candidateCatalog.validationBehaviorVersion,
+      initialCanaryCandidateId: defaults.initialCanaryCandidateId,
+      initialCanaryDepth: defaults.initialCanaryDepth
+    },
+    releaseSafety: {
+      normalPlayGuideHookFree: true, trustedManifestCandidateCount: 0, canaryPrearmed: false,
+      maximumCanariesPerProcess: 1, automaticInProcessAdvance: false
+    },
+    installTarget: 'Crab Champions/CrabChampions/Binaries/Win64',
+    files: manifestFiles
+  };
+  fs.writeFileSync(path.join(stagingDir, 'version-manifest.json'), JSON.stringify(versionManifest, null, 2) + '\n');
+  runCommand('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+    path.join(root, 'scripts', 'verify-ue4ss-bundle.ps1'), stagingDir]);
 
   fs.rmSync(outZip, { force: true });
   runCommand('tar', ['-a', '-cf', outZip, '-C', stagingDir, '.']);
 
   const manifest = {
     generatedAt: new Date().toISOString(),
-    template: path.resolve(template),
-    output: outZip,
+    productVersion: releaseVersion,
+    templateSource: 'external-ue4ss-support-template',
+    outputFile: path.basename(outZip),
     installTarget: 'Crab Champions/CrabChampions/Binaries/Win64',
     files: listFiles(stagingDir)
   };

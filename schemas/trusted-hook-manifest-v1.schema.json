@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/trusted-hook-manifest-v1.schema.json",
+  "title": "CrabRuntimeProbe trusted hook manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAtUtc", "coverageCatalogHash", "hookCatalogIdentity", "callbackImplementationVersion", "callbackSchemaVersion", "validationBehaviorVersion", "compatibilityFingerprint", "generatedFromLedgerAtUtc", "candidates"],
+  "properties": {
+    "schemaVersion": { "const": "trusted-hook-manifest-v1" },
+    "generatedAtUtc": { "type": "string", "format": "date-time" },
+    "coverageCatalogHash": { "$ref": "#/$defs/hash" },
+    "hookCatalogIdentity": { "$ref": "#/$defs/hash" },
+    "callbackImplementationVersion": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "callbackSchemaVersion": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "validationBehaviorVersion": { "type": "string", "minLength": 1, "maxLength": 96 },
+    "compatibilityFingerprint": { "oneOf": [{ "const": "" }, { "$ref": "#/$defs/hash" }] },
+    "generatedFromLedgerAtUtc": { "type": "string", "format": "date-time" },
+    "candidates": {
+      "type": "array", "maxItems": 111, "uniqueItems": true,
+      "items": { "type": "object", "additionalProperties": false, "required": ["candidateId", "hookPathFingerprint", "trustedDepth", "compatibilityFingerprint"], "properties": {
+        "candidateId": { "type": "string", "pattern": "^hook-[a-z0-9-]{3,120}$", "maxLength": 128 },
+        "hookPathFingerprint": { "$ref": "#/$defs/hash" },
+        "trustedDepth": { "type": "integer", "minimum": 1, "maximum": 7 },
+        "compatibilityFingerprint": { "$ref": "#/$defs/hash" }
+      } }
+    }
+  },
+  "$defs": { "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+}

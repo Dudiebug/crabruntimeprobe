@@ -2,6 +2,11 @@
 
 ## RuntimeProbe Operation Docs
 
+- [CrabRuntimeProbe v1.1.0 Readiness Campaign Release Notes](CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md)
+- [CrabRuntimeProbe v1.0.4 Release Notes](CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md)
+- [CrabRuntimeProbe v1.0.4 Campaign and Research Guide](CRABSYNC_FULL_CAMPAIGN_GUIDE.md)
+- [Repository Changelog](../CHANGELOG.md)
+- [2026-07-10 Hook Observer Incident](INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md)
 - [CrabRuntimeProbe Field Guide](CRABRUNTIMEPROBE_FIELD_GUIDE.md)
 - [CrabRuntimeProbe Script Reference](CRABRUNTIMEPROBE_SCRIPT_REFERENCE.md)
 - [Runtime Contexts](RUNTIME_CONTEXTS.md)
@@ -11,6 +16,7 @@
 
 ## Generated Evidence Docs
 
+- [CrabSync Coverage Catalog](CRABSYNC_COVERAGE_CATALOG.md)
 - [Runtime Evidence Index](RUNTIME_EVIDENCE_INDEX.md)
 - [Safe Access Matrix](SAFE_ACCESS_MATRIX.md)
 - [Probe Results](PROBE_RESULTS.md)

@@ -77,9 +77,9 @@ foreach ($expected in @(
 
 $registry = Get-Content -Raw -LiteralPath $ProbeRegistryPath
 $helperStart = $registry.IndexOf("local function buildSlotsReadCache")
-$helperEnd = $registry.IndexOf("local function classifyCrabHCSource")
+$helperEnd = $registry.IndexOf("local function copyTable")
 $probeStart = $registry.IndexOf("Resource.Slots.Read")
-$probeEnd = $registry.IndexOf("FindAllOf.CrabHC.Availability")
+$probeEnd = $registry.IndexOf("SafeWatch.Scalar.Sample")
 if ($helperStart -lt 0 -or $helperEnd -le $helperStart -or $probeStart -lt 0 -or $probeEnd -le $probeStart) { throw "could not isolate slots-read probe block." }
 $slotsBlock = $registry.Substring($helperStart, $helperEnd - $helperStart) + "`n" + $registry.Substring($probeStart, $probeEnd - $probeStart)
 foreach ($required in @(

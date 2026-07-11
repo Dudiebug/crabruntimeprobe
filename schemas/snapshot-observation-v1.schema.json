@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/snapshot-observation-v1.schema.json",
+  "title": "CrabRuntimeProbe snapshot observation",
+  "description": "A read-only state observation emitted by the shared sampler. Normal Play Guide rows are hook-free; progressive rows are explicitly discriminated and cannot qualify normal replay.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "recordType",
+    "sessionId",
+    "campaignId",
+    "campaignGeneration",
+    "machineId",
+    "sequence",
+    "timestampUtc",
+    "lifecycleGeneration",
+    "context",
+    "selectedRole",
+    "observedRole",
+    "worldFingerprint",
+    "playerStateFingerprint",
+    "category",
+    "stability",
+    "fields",
+    "safety",
+    "dirtyEvidence",
+    "crashSuspected"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "recordType": { "const": "snapshot-observation" },
+    "sessionId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "campaignId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "campaignGeneration": { "type": "integer", "minimum": 1 },
+    "machineId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 96,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "timestampUtc": { "type": "string", "format": "date-time" },
+    "lifecycleGeneration": { "type": "integer", "minimum": 0 },
+    "context": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "selectedRole": { "enum": ["host", "joined-client"] },
+    "observedRole": { "enum": ["host", "joined-client", "solo", "unknown"] },
+    "observationProfile": {
+      "enum": ["normal-play-guide", "crabsync-readiness-campaign", "progressive-broad-observation"]
+    },
+    "worldFingerprint": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "playerStateFingerprint": {
+      "type": ["string", "null"],
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "category": {
+      "enum": [
+        "heartbeat",
+        "lifecycle",
+        "health",
+        "crystals",
+        "slots",
+        "equipment",
+        "inventory",
+        "metadata",
+        "transaction",
+        "persistence",
+        "multiplayer"
+      ]
+    },
+    "stability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stable",
+        "sampleCount",
+        "dwellSeconds",
+        "worldStable",
+        "playerStateStable"
+      ],
+      "properties": {
+        "stable": { "type": "boolean" },
+        "sampleCount": { "type": "integer", "minimum": 0 },
+        "dwellSeconds": { "type": "number", "minimum": 0 },
+        "worldStable": { "type": "boolean" },
+        "playerStateStable": { "type": "boolean" },
+        "reason": { "type": "string", "maxLength": 240 }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "stable": { "const": true } },
+            "required": ["stable"]
+          },
+          "then": {
+            "properties": {
+              "sampleCount": { "minimum": 10 },
+              "dwellSeconds": { "minimum": 30 },
+              "worldStable": { "const": true },
+              "playerStateStable": { "const": true }
+            }
+          }
+        }
+      ]
+    },
+    "fields": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/observedField" }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "writesDisabled",
+        "rpcCallsDisabled",
+        "mutationDisabled",
+        "hooksDisabled",
+        "runtimeDiscoveryDisabled",
+        "inventoryStagesDisabled",
+        "rawIdentityDisabled"
+      ],
+      "properties": {
+        "writesDisabled": { "const": true },
+        "rpcCallsDisabled": { "const": true },
+        "mutationDisabled": { "const": true },
+        "hooksDisabled": { "type": "boolean" },
+        "runtimeDiscoveryDisabled": { "const": true },
+        "inventoryStagesDisabled": { "const": true },
+        "rawIdentityDisabled": { "const": true }
+      }
+    },
+    "dirtyEvidence": { "type": "boolean" },
+    "crashSuspected": { "type": "boolean" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "observationProfile": { "const": "progressive-broad-observation" } },
+        "required": ["observationProfile"]
+      },
+      "then": {
+        "properties": {
+          "safety": { "properties": { "hooksDisabled": { "const": false } } }
+        }
+      },
+      "else": {
+        "properties": {
+          "safety": { "properties": { "hooksDisabled": { "const": true } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "observationProfile": { "const": "crabsync-readiness-campaign" } },
+        "required": ["observationProfile"]
+      },
+      "then": {
+        "properties": {
+          "safety": { "properties": { "hooksDisabled": { "const": true } } },
+          "category": { "enum": ["health", "crystals", "slots", "equipment"] }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "observedField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "enum": [
+            "observed",
+            "unchanged",
+            "unavailable",
+            "unsupported",
+            "deferred",
+            "error"
+          ]
+        },
+        "value": {
+          "type": ["string", "number", "integer", "boolean", "null"]
+        },
+        "valueFingerprint": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "reason": { "type": "string", "maxLength": 240 }
+      }
+    }
+  }
+}

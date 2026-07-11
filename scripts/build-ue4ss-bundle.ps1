@@ -3,7 +3,8 @@ param(
   [string]$CrabInvSyncRoot,
 
   [string]$OutputDir = "dist",
-  [string]$Version = "0.1.0",
+  [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$')]
+  [string]$Version = "1.1.0",
   [switch]$NoZip
 )
 
@@ -103,7 +104,9 @@ function Copy-CleanDirectory {
     if ($segments -contains "node_modules") { return }
     if ($segments -contains "results") { return }
     if ($name -match '\.(jsonl|log|dmp|dump|tmp)$') { return }
+    if ($name -match '(?i)(UE4SS[_-]?ObjectDump|ObjectDump).*\.txt$') { return }
     if ($name -match '^(push|recv).*\.json$') { return }
+    if ($name -match '^hook_run_(?:consumed|manifest|classification)_.*\.json$') { return }
 
     $target = Join-Path $Destination $relative
     if ($_.PSIsContainer) {
@@ -136,9 +139,18 @@ CrabRuntimeProbe UE4SS Bundle
 Extract ZIP contents into:
 Crab Champions\CrabChampions\Binaries\Win64
 
-First run should use mode = observe.
+For a clean install, remove an older Mods\CrabRuntimeProbe folder before
+extracting this bundle. Do not reuse prior runtime configuration, campaign manifests, or trust data.
+
+Normal Play Guide is hook-free. Progressive Broad Observation begins with an
+empty trusted pool and only recommends OnRep_IslandRewardRarity at validation
+Depth 1; no canary is prearmed by this package.
 
 Deep inventory, InventoryInfo, health, write, and RPC probes are disabled by default.
+
+The opt-in CrabSync Readiness Campaign is local-only: it does not enumerate
+remote PlayerState objects, traverse inventory, or provide transport/sync/apply
+behavior. See docs\CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md before field testing.
 
 UE4SS is redistributed under UE4SS-LICENSE.txt.
 
@@ -156,6 +168,11 @@ These support mods are UE4SS support files, not CrabRuntimeProbe gameplay code.
 }
 
 try {
+  & node (Join-Path $RepoRoot "tools\generate_crabsync_coverage_catalog.js") --validate
+  if ($LASTEXITCODE -ne 0) { throw "Generated CrabSync catalog/profile validation failed." }
+  & node (Join-Path $RepoRoot "tools\generate_progressive_hook_catalog.js") --validate
+  if ($LASTEXITCODE -ne 0) { throw "Generated progressive hook catalog/default validation failed." }
+
   New-Item -ItemType Directory -Force -Path $TempRoot | Out-Null
   New-Item -ItemType Directory -Force -Path $ResolvedOutputDir | Out-Null
 
@@ -223,8 +240,109 @@ try {
   }
 
   Copy-CleanDirectory -Source (Join-Path $RepoRoot "client\Mods\CrabRuntimeProbe") -Destination (Join-Path $BundleMods "CrabRuntimeProbe")
+  Copy-CleanDirectory -Source (Join-Path $RepoRoot "campaign") -Destination (Join-Path $BundleRoot "campaign")
+  Copy-CleanDirectory -Source (Join-Path $RepoRoot "schemas") -Destination (Join-Path $BundleRoot "schemas")
+  foreach ($doc in @(
+    "CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md",
+    "CRABSYNC_FULL_CAMPAIGN_GUIDE.md",
+    "CRABSYNC_COVERAGE_CATALOG.md",
+    "INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md",
+    "CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md"
+  )) {
+    Copy-RequiredFile -Source (Join-Path $RepoRoot "docs\$doc") -Destination (Join-Path $BundleRoot "docs\$doc")
+  }
+  Copy-RequiredFile -Source (Join-Path $RepoRoot "CHANGELOG.md") -Destination (Join-Path $BundleRoot "CHANGELOG.md")
+  Copy-RequiredFile -Source (Join-Path $RepoRoot "THIRD_PARTY_NOTICES.md") -Destination (Join-Path $BundleRoot "THIRD_PARTY_NOTICES.md")
   Write-ModsTxt -ModsDir $BundleMods
   Write-InstallTxt -BundleDir $BundleRoot
+
+  foreach ($progressiveArtifactName in @(
+    "hook_candidate_catalog.json",
+    "hook_validation_ledger.json",
+    "trusted_hook_manifest.json",
+    "hook_quarantine.json",
+    "progressive_observation.defaults.json"
+  )) {
+    $progressiveArtifactPath = Join-Path $BundleRoot "campaign\$progressiveArtifactName"
+    if (-not (Test-Path -LiteralPath $progressiveArtifactPath -PathType Leaf)) {
+      throw "Missing required progressive campaign artifact: $progressiveArtifactName"
+    }
+  }
+  foreach ($readinessSchemaName in @(
+    "readiness-campaign-manifest-v1.schema.json",
+    "peer-snapshot-v1.schema.json",
+    "terminal-lifecycle-v1.schema.json"
+  )) {
+    $readinessSchemaPath = Join-Path $BundleRoot "schemas\$readinessSchemaName"
+    if (-not (Test-Path -LiteralPath $readinessSchemaPath -PathType Leaf)) {
+      throw "Missing required readiness schema: $readinessSchemaName"
+    }
+  }
+  $candidateCatalog = Get-Content -Raw -LiteralPath (Join-Path $BundleRoot "campaign\hook_candidate_catalog.json") | ConvertFrom-Json -ErrorAction Stop
+  $progressiveDefaults = Get-Content -Raw -LiteralPath (Join-Path $BundleRoot "campaign\progressive_observation.defaults.json") | ConvertFrom-Json -ErrorAction Stop
+  $trustedManifest = Get-Content -Raw -LiteralPath (Join-Path $BundleRoot "campaign\trusted_hook_manifest.json") | ConvertFrom-Json -ErrorAction Stop
+  if (@($trustedManifest.candidates).Count -ne 0 -or $progressiveDefaults.trustedPoolInitiallyEmpty -ne $true -or
+      $progressiveDefaults.automaticInProcessAdvance -ne $false -or $progressiveDefaults.maximumCanariesPerProcess -ne 1) {
+    throw "UE4SS release defaults must be empty-trust, one-canary, and no in-process advance."
+  }
+  $commit = (& git -C $RepoRoot rev-parse HEAD 2>$null)
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) { $commit = "unavailable" }
+  $branch = (& git -C $RepoRoot branch --show-current 2>$null)
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branch)) { $branch = "unavailable" }
+  $generatedAtUtc = [DateTime]::UtcNow.ToString('o')
+  @(
+    "action = release",
+    "product_version = $Version",
+    "git_commit = $([string]$commit)",
+    "git_branch = $([string]$branch)",
+    "timestamp = $generatedAtUtc"
+  ) | Set-Content -LiteralPath (Join-Path $BundleMods "CrabRuntimeProbe\Scripts\build_info.txt") -Encoding ASCII
+
+  $files = Get-ChildItem -LiteralPath $BundleRoot -Recurse -File | Sort-Object FullName | ForEach-Object {
+    $relative = $_.FullName.Substring($BundleRoot.Length).TrimStart('\').Replace('\', '/')
+    [ordered]@{
+      path = $relative
+      size = $_.Length
+      sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+  }
+  $manifest = [ordered]@{
+    schemaVersion = 1
+    product = "CrabRuntimeProbe"
+    version = $Version
+    runtime = "win-x64"
+    bundleFormat = "ue4ss-overlay"
+    commit = [string]$commit
+    generatedAtUtc = $generatedAtUtc
+    schemaIdentities = [ordered]@{
+      liveStatus = "live-status-v1"; snapshotObservation = "snapshot-observation-v1"
+      campaignControl = "campaign-control-v1"; evidenceBundle = "evidence-bundle-v1"
+      coverageCatalog = "coverage-catalog-v1"; compatibilityFingerprint = "compatibility-fingerprint-v1"
+      readinessCampaignManifest = "readiness-campaign-manifest-v1"; peerSnapshot = "peer-snapshot-v1"
+      terminalLifecycle = "terminal-lifecycle-v1"
+      hookBreadcrumb = "hook-breadcrumb-v1"; hookCandidateCatalog = "hook-candidate-catalog-v1"
+      hookQuarantine = "hook-quarantine-v1"; hookRunClassification = "hook-run-classification-v1"
+      hookRunConsumed = "hook-run-consumed-v1"
+      hookRunManifest = "hook-run-manifest-v1"; hookValidationLedger = "hook-validation-ledger-v1"
+      trustedHookManifest = "trusted-hook-manifest-v1"
+    }
+    campaignIdentities = [ordered]@{
+      coverageCatalogHash = [string]$candidateCatalog.coverageCatalogHash
+      hookCatalogIdentity = [string]$candidateCatalog.hookCatalogIdentity
+      callbackImplementationVersion = [string]$candidateCatalog.callbackImplementationVersion
+      callbackSchemaVersion = [string]$candidateCatalog.callbackSchemaVersion
+      validationBehaviorVersion = [string]$candidateCatalog.validationBehaviorVersion
+      initialCanaryCandidateId = [string]$progressiveDefaults.initialCanaryCandidateId
+      initialCanaryDepth = [int]$progressiveDefaults.initialCanaryDepth
+    }
+    releaseSafety = [ordered]@{
+      normalPlayGuideHookFree = $true; trustedManifestCandidateCount = 0
+      canaryPrearmed = $false; maximumCanariesPerProcess = 1; automaticInProcessAdvance = $false
+    }
+    installTarget = "Crab Champions/CrabChampions/Binaries/Win64"
+    files = @($files)
+  }
+  $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $BundleRoot "version-manifest.json") -Encoding UTF8
 
   & (Join-Path $PSScriptRoot "verify-ue4ss-bundle.ps1") $BundleRoot
   if ($LASTEXITCODE -ne 0) {

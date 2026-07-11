@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/hook-run-consumed-v1.schema.json",
+  "title": "CrabRuntimeProbe single-process research run consumption marker v1",
+  "description": "Created atomically before a progressive run can start. Its presence permanently prevents automatic rearming of the same run ID.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "runId", "consumedAtUtc", "automaticRearmAllowed"],
+  "properties": {
+    "schemaVersion": { "const": "hook-run-consumed-v1" },
+    "runId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "consumedAtUtc": { "type": "string", "format": "date-time", "maxLength": 64 },
+    "automaticRearmAllowed": { "const": false }
+  }
+}

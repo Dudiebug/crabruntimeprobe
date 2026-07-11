@@ -2,6 +2,7 @@ local SCRIPT_DIR = 'Mods/CrabRuntimeProbe/Scripts/'
 package.path = package.path .. ';' .. SCRIPT_DIR .. '?.lua'
 
 local crpLog = require('crp_log')
+local dashboardAutostart = require('dashboard_autostart')
 local writerFactory = require('result_writer')
 local evidenceWriterFactory = require('evidence_writer')
 
@@ -39,8 +40,82 @@ local DEFAULT_CONFIG = {
   allowInventoryUserdataIntrospectionProbes = false,
   allowInventoryArrayCountProbes = false,
   allowInventoryElementDataAssetReadProbes = false,
+  -- The default profile remains the hook-free Normal Play Guide.  The
+  -- readiness campaign is opt-in and is rejected unless both selectors are
+  -- present, so a copied config cannot accidentally turn a normal session
+  -- into paired research.
+  campaignProfile = 'normal-play-guide',
+  readinessCampaignEnabled = false,
+  readinessPairId = 'unassigned',
+  readinessManifestId = 'unassigned',
+  readinessEnabledChannels = '',
+  readinessPeerSnapshotsEnabled = false,
+  readinessMaxPeers = 4,
+  readinessHealthIntervalSeconds = 1,
+  readinessScalarIntervalSeconds = 1,
+  readinessUnchangedHeartbeatSeconds = 30,
+  readinessTerminalSnapshotEnabled = true,
+  readinessInventoryStage = 'disabled',
+  fullObserveEnabled = false,
+  snapshotSamplerEnabled = false,
+  snapshotSampleIntervalSeconds = 3,
+  snapshotStableSamplesRequired = 10,
+  snapshotStableDwellSeconds = 30,
+  snapshotUnchangedHeartbeatSeconds = 30,
+  allowPassiveObservationHooks = false,
+  allowFullObserveInventoryStages = false,
+  allowFullObserveRuntimeDiscovery = false,
+  progressiveObservationEnabled = false,
+  researchRunType = 'combined',
+  researchRunId = 'unassigned',
+  compatibilityFingerprint = 'unassigned',
+  compatibilityGameBuild = 'unknown',
+  compatibilityUe4ssVersion = 'unknown',
+  compatibilityComputedAtUtc = 'unassigned',
+  researchCoverageCatalogHash = 'unassigned',
+  researchHookCatalogIdentity = 'unassigned',
+  researchCallbackImplementationVersion = 'unassigned',
+  researchCallbackSchemaVersion = 'unassigned',
+  researchValidationBehaviorVersion = 'unassigned',
+  trustedCandidateSelections = '',
+  canaryCandidateId = 'unassigned',
+  canaryHookPathFingerprint = 'unassigned',
+  canaryValidationDepth = 0,
+  canaryState = 'untested',
+  relicCountValidationEnabled = false,
+  progressiveHooksArmed = false,
+  statusWriterEnabled = false,
   allowWriteProbes = false,
   allowRpcProbes = false,
+  campaignName = 'crabsync-full-observe',
+  campaignId = 'unassigned',
+  campaignSessionId = 'unassigned',
+  machineId = 'unassigned',
+  selectedRole = 'unselected',
+  campaignGeneration = 0,
+  resumeEvidenceSequence = 0,
+  resumeStatusSequence = 0,
+  statusRingSize = 4,
+  fullObserveHeartbeatSeconds = 1,
+  fullObserveInventoryIntervalSeconds = 2,
+  fullObserveInventoryHeartbeatSeconds = 30,
+  fullObserveCleanSamplesRequired = 3,
+  fullObserveStableSamplesRequired = 3,
+  fullObserveStableDwellSeconds = 2,
+  fullObserveHookGlobalRowCap = 2048,
+  fullObserveHookPerDescriptorRowCap = 128,
+  fullObserveHookMinIntervalSeconds = 1,
+  fullObserveHookTrackedDescriptorCap = 128,
+  fullObserveSlotStabilityWindowSeconds = 30,
+  fullObserveSlotStabilitySamplesRequired = 5,
+  fullObserveMaxInventoryItems = 32,
+  fullObserveMaxEnhancements = 16,
+  fullObserveMaxStageRowsPerCategory = 256,
+  resumeWeaponModsStage = 1,
+  resumeAbilityModsStage = 1,
+  resumeMeleeModsStage = 1,
+  resumePerksStage = 1,
+  resumeRelicsStage = 1,
   safeScalarWatchIntervalSeconds = 5,
   safeScalarWatchHeartbeatSeconds = 60,
   safeScalarWatchMaxSamples = 240,
@@ -65,6 +140,8 @@ local ALLOWED_TICK_DRIVERS = {
 }
 
 local log = crpLog.line
+
+dashboardAutostart.launch(SCRIPT_DIR .. 'dashboard_autostart.txt', log)
 
 local function parseConfig(path)
   local config = {}
@@ -129,6 +206,27 @@ end
 local cfg = parseConfig(SCRIPT_DIR .. 'config.txt')
 log('[CrabRuntimeProbe] boot phase: config loaded')
 
+local progressiveSelection = nil
+if cfg.progressiveObservationEnabled == true then
+  local progressiveConfigOk, progressiveConfig = pcall(require, 'progressive_config')
+  if progressiveConfigOk and type(progressiveConfig) == 'table' and type(progressiveConfig.load) == 'function' then
+    local loadOk, selectionOrErr = pcall(progressiveConfig.load, SCRIPT_DIR .. 'config.txt')
+    if loadOk and type(selectionOrErr) == 'table' and selectionOrErr.enabled == true then
+      progressiveSelection = selectionOrErr
+    else
+      cfg.progressiveObservationEnabled = false
+      cfg.progressiveConfigRejectedReason = loadOk and tostring(selectionOrErr and selectionOrErr.reason or 'invalid')
+        or 'progressive-config-loader-error'
+      log('[CrabRuntimeProbe] ERROR: progressive configuration rejected; continuing hook-free: '
+        .. tostring(cfg.progressiveConfigRejectedReason))
+    end
+  else
+    cfg.progressiveObservationEnabled = false
+    cfg.progressiveConfigRejectedReason = 'progressive-config-module-unavailable'
+    log('[CrabRuntimeProbe] ERROR: progressive configuration module unavailable; continuing hook-free')
+  end
+end
+
 if cfg.enabled == false then
   log('[CrabRuntimeProbe] disabled in config')
   return
@@ -139,7 +237,118 @@ if type(cfg.tickDriver) ~= 'string' or ALLOWED_TICK_DRIVERS[cfg.tickDriver] ~= t
   return
 end
 
+local function validOpaqueId(value, minimumLength, maximumLength)
+  local text = tostring(value or '')
+  minimumLength = minimumLength or 1
+  maximumLength = maximumLength or 96
+  return text ~= '' and text ~= 'unassigned' and #text >= minimumLength and #text <= maximumLength
+    and text:match('^[%w_%-]+$') ~= nil
+end
+
+local function validFullObserveIdentity(config)
+  local generation = tonumber(config.campaignGeneration)
+  local role = tostring(config.selectedRole or ''):lower():gsub('%s+', '-')
+  return validOpaqueId(config.campaignId, 1, 128)
+    and validOpaqueId(config.campaignSessionId, 8, 96)
+    and validOpaqueId(config.machineId, 8, 96)
+    and (role == 'host' or role == 'joined-client')
+    and generation ~= nil and generation >= 1 and math.floor(generation) == generation
+end
+
+local function validReadinessPairId(value)
+  local suffix = tostring(value or ''):match('^readiness%-pair%-(.*)$')
+  return suffix ~= nil and #suffix == 24 and suffix:match('^[0-9a-f]+$') ~= nil
+end
+
+local function validReadinessChannels(value)
+  local expected = {
+    health = true,
+    crystals = true,
+    slots = true,
+    equipment = true,
+    ['peer-snapshots'] = true
+  }
+  local seen = {}
+  local count = 0
+  for channel in tostring(value or ''):gmatch('[^,%s]+') do
+    if expected[channel] ~= true or seen[channel] then return false end
+    seen[channel] = true
+    count = count + 1
+  end
+  return count == 5 and seen.health and seen.crystals and seen.slots and seen.equipment and seen['peer-snapshots']
+end
+
+local function boundedNumber(value, minimum, maximum)
+  local numberValue = tonumber(value)
+  return numberValue ~= nil and numberValue == numberValue
+    and numberValue >= minimum and numberValue <= maximum
+end
+
+local function readinessCampaignRequested(config)
+  return config.readinessCampaignEnabled == true
+    or tostring(config.campaignProfile or '') == 'crabsync-readiness-campaign'
+end
+
+local function validReadinessCampaignConfiguration(config)
+  if config.readinessCampaignEnabled ~= true
+    or tostring(config.campaignProfile or '') ~= 'crabsync-readiness-campaign'
+    or tostring(config.campaignId or '') ~= 'crabsync-readiness-campaign' then
+    return false
+  end
+  if config.progressiveObservationEnabled == true or config.progressiveHooksArmed == true
+    or config.fullObserveEnabled ~= true or config.snapshotSamplerEnabled ~= true
+    or config.statusWriterEnabled ~= true or config.writeJsonlResults ~= true
+    or tostring(config.probeSet or '') ~= 'crabsync-readiness-campaign'
+    or tostring(config.mode or '') ~= 'observe'
+    or config.readinessPeerSnapshotsEnabled ~= true or config.readinessTerminalSnapshotEnabled ~= true
+    or tostring(config.readinessInventoryStage or '') ~= 'disabled'
+    or not validReadinessPairId(config.readinessPairId)
+    or not validOpaqueId(config.readinessManifestId, 8, 128)
+    or not validReadinessChannels(config.readinessEnabledChannels)
+    or not boundedNumber(config.readinessMaxPeers, 1, 4)
+    or not boundedNumber(config.readinessHealthIntervalSeconds, 0.25, 5)
+    or not boundedNumber(config.readinessScalarIntervalSeconds, 1, 60)
+    or not boundedNumber(config.readinessUnchangedHeartbeatSeconds, 10, 600)
+    or tonumber(config.readinessHealthIntervalSeconds) ~= tonumber(config.readinessScalarIntervalSeconds)
+    or tonumber(config.snapshotSampleIntervalSeconds) ~= tonumber(config.readinessScalarIntervalSeconds)
+    or tonumber(config.snapshotUnchangedHeartbeatSeconds) ~= tonumber(config.readinessUnchangedHeartbeatSeconds) then
+    return false
+  end
+  for _, key in ipairs({
+    'allowHudTickHook', 'allowWriteProbes', 'allowRpcProbes', 'allowRawIdentityEvidence',
+    'allowUnknownRoleProbes', 'allowJoinedClientDeepProbes', 'allowDeepArrayProbes',
+    'allowInventoryInfoProbes', 'allowHealthProbes', 'allowIdentityProbes',
+    'allowResourceVisibilityProbes', 'allowCrystalsReadProbes', 'allowSlotsReadProbes',
+    'allowSafeScalarWatchProbes', 'allowPerkDataAssetCatalogProbes',
+    'allowMaxSafePlayRecorderProbes', 'allowInventoryArrayShallowProbes',
+    'allowInventoryArrayShapeConfirmProbes', 'allowInventoryUserdataIntrospectionProbes',
+    'allowInventoryArrayCountProbes', 'allowInventoryElementDataAssetReadProbes',
+    'allowPassiveObservationHooks', 'allowFullObserveInventoryStages', 'allowFullObserveRuntimeDiscovery'
+  }) do
+    if config[key] == true then return false end
+  end
+  return true
+end
+
+-- A readiness run deliberately has a second explicit selector.  This keeps
+-- the existing hook-free profile unchanged and keeps progressive canary
+-- research mutually exclusive with paired scalar observation.
+local readinessCampaign = readinessCampaignRequested(cfg)
+if readinessCampaign and not validReadinessCampaignConfiguration(cfg) then
+  log('[CrabRuntimeProbe] ERROR: readiness campaign requires campaignProfile=crabsync-readiness-campaign, readinessCampaignEnabled=true, and hooks disabled')
+  return
+end
+
 local sessionId = os.date('!%Y%m%dT%H%M%SZ')
+if cfg.fullObserveEnabled == true
+  and (cfg.probeSet == 'crabsync-full-observe' or cfg.probeSet == 'crabsync-readiness-campaign') then
+  if validFullObserveIdentity(cfg) then
+    sessionId = tostring(cfg.campaignSessionId)
+  else
+    log('[CrabRuntimeProbe] ERROR: full observe requires assigned campaign/session/machine/role/generation identity')
+    return
+  end
+end
 local writer = writerFactory.new(sessionId, cfg)
 local evidenceWriter = evidenceWriterFactory.new(sessionId, cfg)
 log('[CrabRuntimeProbe] boot phase: writer initialized')
@@ -174,6 +383,17 @@ log('[CrabRuntimeProbe] safety allowHudTickHook=' .. tostring(cfg.allowHudTickHo
   .. ' allowInventoryUserdataIntrospectionProbes=' .. tostring(cfg.allowInventoryUserdataIntrospectionProbes)
   .. ' allowInventoryArrayCountProbes=' .. tostring(cfg.allowInventoryArrayCountProbes)
   .. ' allowInventoryElementDataAssetReadProbes=' .. tostring(cfg.allowInventoryElementDataAssetReadProbes)
+  .. ' campaignProfile=' .. tostring(cfg.campaignProfile)
+  .. ' readinessCampaignEnabled=' .. tostring(cfg.readinessCampaignEnabled)
+  .. ' readinessPeerSnapshotsEnabled=' .. tostring(cfg.readinessPeerSnapshotsEnabled)
+  .. ' readinessInventoryStage=' .. tostring(cfg.readinessInventoryStage)
+  .. ' fullObserveEnabled=' .. tostring(cfg.fullObserveEnabled)
+  .. ' allowPassiveObservationHooks=' .. tostring(cfg.allowPassiveObservationHooks)
+  .. ' allowFullObserveInventoryStages=' .. tostring(cfg.allowFullObserveInventoryStages)
+  .. ' allowFullObserveRuntimeDiscovery=' .. tostring(cfg.allowFullObserveRuntimeDiscovery)
+  .. ' progressiveObservationEnabled=' .. tostring(cfg.progressiveObservationEnabled)
+  .. ' relicCountValidationEnabled=' .. tostring(cfg.relicCountValidationEnabled)
+  .. ' statusWriterEnabled=' .. tostring(cfg.statusWriterEnabled)
   .. ' allowWriteProbes=' .. tostring(cfg.allowWriteProbes)
   .. ' allowRpcProbes=' .. tostring(cfg.allowRpcProbes))
 log('[CrabRuntimeProbe] results primary=' .. tostring(writer.resultPath))
@@ -199,12 +419,56 @@ if cfg.tickDriver == 'none' then
 end
 
 local safe = require('safe_access')
-local runner = require('probe_runner')
-local state = runner.new(cfg, safe, writer, evidenceWriter)
+local progressiveCampaign = progressiveSelection ~= nil
+  and cfg.fullObserveEnabled == true
+  and cfg.snapshotSamplerEnabled == true
+  and cfg.probeSet == 'crabsync-full-observe'
+  and readinessCampaign ~= true
+local snapshotCampaign = not progressiveCampaign
+  and cfg.fullObserveEnabled == true
+  and cfg.snapshotSamplerEnabled == true
+  and cfg.probeSet == 'crabsync-full-observe'
+local state = nil
+if not snapshotCampaign and not progressiveCampaign then
+  local runner = require('probe_runner')
+  state = runner.new(cfg, safe, writer, evidenceWriter)
+end
+local fullObserveCoordinator = nil
+if snapshotCampaign or progressiveCampaign or readinessCampaign then
+  local coordinatorOk = false
+  local coordinatorFactory = nil
+  if progressiveCampaign then
+    coordinatorOk, coordinatorFactory = pcall(require, "progressive_observe_coordinator")
+  elseif readinessCampaign then
+    -- Keep paired readiness separate from the normal sampler closure. The
+    -- readiness module may evolve independently while Normal Play Guide stays
+    -- hook-free and never imports paired-readiness code.
+    coordinatorOk, coordinatorFactory = pcall(require, "readiness_observe_coordinator")
+  else
+    -- Keep this protected literal import stable: the normal-sampler source guard
+    -- proves that default mode cannot drift onto the progressive hook path.
+    coordinatorOk, coordinatorFactory = pcall(require, "full_observe_coordinator")
+  end
+  if coordinatorOk and type(coordinatorFactory) == 'table' and type(coordinatorFactory.new) == 'function' then
+    local newOk, coordinatorOrErr = pcall(coordinatorFactory.new, sessionId, cfg, safe, evidenceWriter, progressiveSelection)
+    if newOk then
+      fullObserveCoordinator = coordinatorOrErr
+    else
+      log('[CrabRuntimeProbe] ERROR: full observe coordinator initialization failed: ' .. tostring(coordinatorOrErr))
+    end
+  else
+    log('[CrabRuntimeProbe] ERROR: full observe coordinator unavailable: ' .. tostring(coordinatorFactory))
+  end
+end
+if (snapshotCampaign or progressiveCampaign or readinessCampaign) and fullObserveCoordinator == nil then
+  log('[CrabRuntimeProbe] ERROR: snapshot campaign coordinator unavailable; no tick source will be registered')
+  return
+end
 
 local function tickOnce()
   local ok, err = pcall(function()
-    state:onTick()
+    if state then state:onTick() end
+    if fullObserveCoordinator then fullObserveCoordinator:onTick(state) end
   end)
   if not ok then
     log('[CrabRuntimeProbe] tick error: ' .. tostring(err))
@@ -261,6 +525,17 @@ local function registerSelectedTickDriver(driver)
   log('[CrabRuntimeProbe] tick source registered: ' .. tostring(driver))
   log('[CrabRuntimeProbe] boot phase: tick registration complete')
   return true
+end
+
+-- Full-observe safety validation and durable progressive setup must succeed
+-- before any tick source (especially the optional HUD hook) is registered.
+if fullObserveCoordinator then
+  local startOk, startedOrError = pcall(function() return fullObserveCoordinator:start() end)
+  if not startOk or startedOrError ~= true then
+    log('[CrabRuntimeProbe] ERROR: full observe coordinator start rejected: '
+      .. (startOk and 'unsafe-or-incomplete-configuration' or tostring(startedOrError)))
+    return
+  end
 end
 
 local ok, registeredOrError = pcall(function()

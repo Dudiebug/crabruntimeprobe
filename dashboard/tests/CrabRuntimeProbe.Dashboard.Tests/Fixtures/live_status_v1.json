@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "sequence": 12,
+  "writtenAtUtc": "2026-07-10T18:00:00Z",
+  "heartbeatAtUtc": "2026-07-10T18:00:00Z",
+  "campaignId": "crabsync-full-observe",
+  "campaignName": "Fixture campaign",
+  "campaignGeneration": 42,
+  "machineId": "fixture-machine",
+  "sessionId": "fixture-session",
+  "selectedRole": "joined-client",
+  "observedRole": "joined-client",
+  "authorityStatus": "remote-owned",
+  "lifecycle": { "state": "stable", "generation": 2, "world": "Island", "context": "run", "stable": true },
+  "runtime": { "gameProcessRunning": true, "gameProcessState": "running", "ue4ssState": "loaded", "runtimeProbeState": "active", "runtimeProbeLoaded": true, "probeStage": "passive-observe", "currentProbeStage": "passive-observe", "activeProfile": "crabsync-full-observe", "collectionReady": true, "stopRequested": false },
+  "safety": { "writesDisabled": true, "rpcsDisabled": true, "mutationDisabled": true, "hudHookDisabled": true, "rawIdentityDisabled": true, "hooksDisabled": true, "runtimeDiscoveryDisabled": true, "inventoryStagesDisabled": true, "inventoryDepth": 2, "circuitBreakers": { "inventory": "closed" } },
+  "checklist": {},
+  "evidenceHealth": { "state": "healthy", "canonicalRows": 4, "rejectedRows": 0, "dirtyRows": 0 },
+  "crashSuspected": false,
+  "dirtyEvidence": false
+}

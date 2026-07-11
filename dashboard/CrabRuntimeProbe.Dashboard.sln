@@ -1,0 +1,37 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CrabRuntimeProbe.Dashboard.Core", "src\CrabRuntimeProbe.Dashboard.Core\CrabRuntimeProbe.Dashboard.Core.csproj", "{261E77EE-5928-41FB-8E11-0807A2960B30}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CrabRuntimeProbe.Dashboard.Cli", "src\CrabRuntimeProbe.Dashboard.Cli\CrabRuntimeProbe.Dashboard.Cli.csproj", "{08BEC114-3A34-4427-969E-9F83071012EB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CrabRuntimeProbe.Dashboard", "src\CrabRuntimeProbe.Dashboard\CrabRuntimeProbe.Dashboard.csproj", "{7299C073-63DC-4783-A7D5-998AF83FCE91}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CrabRuntimeProbe.Dashboard.Tests", "tests\CrabRuntimeProbe.Dashboard.Tests\CrabRuntimeProbe.Dashboard.Tests.csproj", "{09BF84D0-35D7-401A-B11C-2C6082BF6CC5}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{261E77EE-5928-41FB-8E11-0807A2960B30}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{261E77EE-5928-41FB-8E11-0807A2960B30}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{261E77EE-5928-41FB-8E11-0807A2960B30}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{261E77EE-5928-41FB-8E11-0807A2960B30}.Release|Any CPU.Build.0 = Release|Any CPU
+		{08BEC114-3A34-4427-969E-9F83071012EB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{08BEC114-3A34-4427-969E-9F83071012EB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{08BEC114-3A34-4427-969E-9F83071012EB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{08BEC114-3A34-4427-969E-9F83071012EB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7299C073-63DC-4783-A7D5-998AF83FCE91}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7299C073-63DC-4783-A7D5-998AF83FCE91}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7299C073-63DC-4783-A7D5-998AF83FCE91}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7299C073-63DC-4783-A7D5-998AF83FCE91}.Release|Any CPU.Build.0 = Release|Any CPU
+		{09BF84D0-35D7-401A-B11C-2C6082BF6CC5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{09BF84D0-35D7-401A-B11C-2C6082BF6CC5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{09BF84D0-35D7-401A-B11C-2C6082BF6CC5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{09BF84D0-35D7-401A-B11C-2C6082BF6CC5}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

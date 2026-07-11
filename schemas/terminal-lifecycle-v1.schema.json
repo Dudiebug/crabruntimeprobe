@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/terminal-lifecycle-v1.schema.json",
+  "title": "CrabRuntimeProbe readiness terminal lifecycle v1",
+  "description": "A durable final lifecycle transition emitted before a readiness sampler clears its stable scope.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "recordType", "event", "readinessSchema", "campaignId", "campaignGeneration", "sessionId", "machineId", "sequence", "timestampUtc", "selectedRole", "profileId", "readinessPairId", "priorLifecycle", "nextLifecycle", "reason", "baselineReady", "peerSamplingSummary", "dirtyEvidence", "crashSuspected", "safety"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "recordType": { "const": "readiness-lifecycle-terminal" },
+    "event": { "const": "Readiness.LifecycleTerminal" },
+    "readinessSchema": { "const": "terminal-lifecycle-v1" },
+    "campaignId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "campaignGeneration": { "type": "integer", "minimum": 1 },
+    "sessionId": { "$ref": "#/$defs/id" },
+    "machineId": { "$ref": "#/$defs/id" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "timestampUtc": { "type": "string", "format": "date-time", "maxLength": 64 },
+    "selectedRole": { "enum": ["host", "joined-client"] },
+    "profileId": { "const": "crabsync-readiness-campaign" },
+    "readinessPairId": { "$ref": "#/$defs/pairId" },
+    "priorLifecycle": { "$ref": "#/$defs/lifecycle" },
+    "nextLifecycle": { "$ref": "#/$defs/lifecycle" },
+    "reason": { "type": "string", "minLength": 1, "maxLength": 240 },
+    "baselineReady": { "type": "boolean" },
+    "peerSamplingSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["peerSnapshotCount", "visiblePlayerCount", "stablePlayerCount"],
+      "properties": {
+        "peerSnapshotCount": { "type": "integer", "minimum": 0 },
+        "visiblePlayerCount": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "stablePlayerCount": { "type": "integer", "minimum": 0, "maximum": 4 }
+      }
+    },
+    "dirtyEvidence": { "type": "boolean" },
+    "crashSuspected": { "type": "boolean" },
+    "safety": { "$ref": "#/$defs/safety" }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Za-z0-9_-]+$" },
+    "pairId": { "type": "string", "pattern": "^readiness-pair-[a-f0-9]{24}$" },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "generation", "context", "stable"],
+      "properties": {
+        "state": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "generation": { "type": "integer", "minimum": 0 },
+        "context": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "stable": { "type": "boolean" }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["writesDisabled", "rpcCallsDisabled", "mutationDisabled", "hooksDisabled", "runtimeDiscoveryDisabled", "inventoryStagesDisabled", "rawIdentityDisabled"],
+      "properties": {
+        "writesDisabled": { "const": true },
+        "rpcCallsDisabled": { "const": true },
+        "mutationDisabled": { "const": true },
+        "hooksDisabled": { "const": true },
+        "runtimeDiscoveryDisabled": { "const": true },
+        "inventoryStagesDisabled": { "const": true },
+        "rawIdentityDisabled": { "const": true }
+      }
+    }
+  }
+}

@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/live-status-v1.schema.json",
+  "title": "CrabRuntimeProbe live diagnostic status",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "sequence",
+    "writtenAtUtc",
+    "heartbeatAtUtc",
+    "campaignId",
+    "campaignGeneration",
+    "machineId",
+    "sessionId",
+    "selectedRole",
+    "observedRole",
+    "lifecycle",
+    "runtime",
+    "safety",
+    "checklist",
+    "evidenceHealth",
+    "crashSuspected",
+    "dirtyEvidence"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "sequence": { "type": "integer", "minimum": 0 },
+    "writtenAtUtc": { "type": "string", "format": "date-time" },
+    "heartbeatAtUtc": { "type": "string", "format": "date-time" },
+    "campaignId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "campaignName": { "type": "string", "maxLength": 160 },
+    "campaignGeneration": { "type": "integer", "minimum": 1 },
+    "machineId": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,96}$" },
+    "sessionId": { "type": "string", "minLength": 8, "maxLength": 128 },
+    "selectedRole": { "enum": ["host", "joined-client"] },
+    "observedRole": { "enum": ["host", "joined-client", "solo", "unknown"] },
+    "authorityStatus": { "type": "string" },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["state", "generation", "context", "stable"],
+      "properties": {
+        "state": { "type": "string" },
+        "generation": { "type": "integer", "minimum": 0 },
+        "context": { "type": "string" },
+        "stable": { "type": "boolean" },
+        "stabilityReady": { "type": "boolean" },
+        "stableSamples": { "type": "integer", "minimum": 0 },
+        "stableSamplesRequired": { "type": "integer", "minimum": 0 },
+        "stableDwellSeconds": { "type": "number", "minimum": 0 },
+        "stableDwellSecondsRequired": { "type": "number", "minimum": 0 },
+        "stabilityResetReason": { "type": "string", "maxLength": 256 },
+        "worldFingerprint": { "type": "string" },
+        "localPlayerStateFingerprint": { "type": "string" }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["probeStage", "currentProbeStage", "stopRequested", "runtimeProbeLoaded", "runtimeProbeState", "ue4ssState", "gameProcessState"],
+      "properties": {
+        "probeStage": { "type": ["string", "integer"] },
+        "currentProbeStage": { "type": ["string", "integer"] },
+        "stopRequested": { "type": "boolean" },
+        "runtimeProbeLoaded": { "const": true },
+        "runtimeProbeState": { "enum": ["active", "stopped"] },
+        "ue4ssState": { "const": "loaded" },
+        "gameProcessState": { "const": "running" },
+        "activeProfile": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "profileId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "currentSamplingCategory": { "type": "string", "maxLength": 128 },
+        "collectionReady": { "type": "boolean" },
+        "evidenceSequence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "writesDisabled",
+        "rpcCallsDisabled",
+        "mutationDisabled",
+        "hudHookDisabled",
+        "rawIdentityDisabled",
+        "hooksDisabled",
+        "runtimeDiscoveryDisabled",
+        "inventoryStagesDisabled",
+        "inventoryDepth",
+        "circuitBreakers"
+      ],
+      "properties": {
+        "writesDisabled": { "type": "boolean" },
+        "rpcCallsDisabled": { "type": "boolean" },
+        "rpcsDisabled": { "type": "boolean" },
+        "mutationDisabled": { "type": "boolean" },
+        "hudHookDisabled": { "type": "boolean" },
+        "rawIdentityDisabled": { "type": "boolean" },
+        "hooksDisabled": { "type": "boolean" },
+        "runtimeDiscoveryDisabled": { "type": "boolean" },
+        "inventoryStagesDisabled": { "type": "boolean" },
+        "inventoryDepth": { "type": "integer", "minimum": 0, "maximum": 14 },
+        "circuitBreakers": { "type": "object", "additionalProperties": true }
+      }
+    },
+    "checklist": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/checklistEntry"
+      }
+    },
+    "evidenceHealth": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["state"],
+          "properties": { "state": { "type": "string", "minLength": 1 } }
+        }
+      ]
+    },
+    "crashSuspected": { "type": "boolean" },
+    "dirtyEvidence": { "type": "boolean" }
+  },
+  "$defs": {
+    "checklistEntry": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["status", "observationCount"],
+      "properties": {
+        "status": {
+          "enum": [
+            "not-observed",
+            "in-progress",
+            "partial",
+            "confirmed",
+            "unsupported",
+            "blocked-by-prerequisite",
+            "crash-suspect",
+            "dirty-evidence",
+            "not-applicable"
+          ]
+        },
+        "observationCount": { "type": "integer", "minimum": 0 },
+        "firstObservedAtUtc": { "type": ["string", "null"], "format": "date-time" },
+        "lastObservedAtUtc": { "type": ["string", "null"], "format": "date-time" },
+        "sourceRole": { "type": "string" },
+        "evidenceSessionRef": { "type": "string" },
+        "nextInstruction": { "type": "string" }
+      }
+    }
+  }
+}
