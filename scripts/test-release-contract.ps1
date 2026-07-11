@@ -11,6 +11,9 @@ $verifyPath = Join-Path $PSScriptRoot 'verify-release.ps1'
 $schemaPath = Join-Path $repoRoot 'schemas\evidence-bundle-v1.schema.json'
 $liveStatusSchemaPath = Join-Path $repoRoot 'schemas\live-status-v1.schema.json'
 $snapshotSchemaPath = Join-Path $repoRoot 'schemas\snapshot-observation-v1.schema.json'
+$readinessManifestSchemaPath = Join-Path $repoRoot 'schemas\readiness-campaign-manifest-v1.schema.json'
+$peerSnapshotSchemaPath = Join-Path $repoRoot 'schemas\peer-snapshot-v1.schema.json'
+$terminalLifecycleSchemaPath = Join-Path $repoRoot 'schemas\terminal-lifecycle-v1.schema.json'
 $configPath = Join-Path $repoRoot 'client\Mods\CrabRuntimeProbe\Scripts\config.txt'
 $directoryPropsPath = Join-Path $repoRoot 'dashboard\Directory.Build.props'
 $ue4ssBuildPath = Join-Path $PSScriptRoot 'build-ue4ss-bundle.ps1'
@@ -19,6 +22,7 @@ $nodePackagePath = Join-Path $repoRoot 'tools\package_release.js'
 $workflowPath = Join-Path $repoRoot '.github\workflows\dashboard-windows.yml'
 
 foreach ($path in @($buildPath, $verifyPath, $schemaPath, $liveStatusSchemaPath, $snapshotSchemaPath,
+  $readinessManifestSchemaPath, $peerSnapshotSchemaPath, $terminalLifecycleSchemaPath,
   $directoryPropsPath, $ue4ssBuildPath, $ue4ssVerifyPath, $nodePackagePath, $workflowPath)) {
   if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing release contract file: $path" }
 }
@@ -30,6 +34,9 @@ Assert-CrabRuntimeProbeModLayout `
 Assert-CrabRuntimeProbeNormalSamplerSafety `
   -ScriptsRoot (Join-Path $repoRoot 'client\Mods\CrabRuntimeProbe\Scripts') `
   -Label 'source normal snapshot sampler'
+Assert-CrabRuntimeProbeReadinessSamplerSafety `
+  -ScriptsRoot (Join-Path $repoRoot 'client\Mods\CrabRuntimeProbe\Scripts') `
+  -Label 'source readiness sampler'
 Assert-CrabRuntimeProbeSnapshotObservationSchema `
   -SchemaPath $snapshotSchemaPath `
   -Label 'source snapshot observation schema'
@@ -46,9 +53,11 @@ foreach ($module in @(
   'campaign_state.lua',
   'status_writer.lua',
   'snapshot_sampler.lua',
+  'peer_sampler.lua',
   'passive_hook_manager.lua',
   'inventory_stage_manager.lua',
   'full_observe_coordinator.lua',
+  'readiness_observe_coordinator.lua',
   'crabsync_catalog.lua',
   'dashboard_autostart.lua',
   'research_hook_catalog.lua',
@@ -99,15 +108,25 @@ foreach ($progressiveSchema in @(
     throw "Release verification does not require $progressiveSchema."
   }
 }
+foreach ($readinessSchema in @(
+  'readiness-campaign-manifest-v1.schema.json', 'peer-snapshot-v1.schema.json',
+  'terminal-lifecycle-v1.schema.json'
+)) {
+  foreach ($text in @($build, $verify, $ue4ssBuild, $ue4ssVerify, $nodePackage)) {
+    if ($text -notmatch [regex]::Escape($readinessSchema)) {
+      throw "Release path does not include readiness schema $readinessSchema."
+    }
+  }
+}
 foreach ($versionToken in @(
-  '<Version>1.0.4</Version>', '<AssemblyVersion>1.0.4.0</AssemblyVersion>',
-  '<FileVersion>1.0.4.0</FileVersion>', '<InformationalVersion>1.0.4</InformationalVersion>'
+  '<Version>1.1.0</Version>', '<AssemblyVersion>1.1.0.0</AssemblyVersion>',
+  '<FileVersion>1.1.0.0</FileVersion>', '<InformationalVersion>1.1.0</InformationalVersion>'
 )) {
   if ($directoryProps -notmatch [regex]::Escape($versionToken)) { throw "Dashboard metadata missing $versionToken." }
 }
-if ($build -notmatch '\$Version\s*=\s*"1\.0\.4"' -or $ue4ssBuild -notmatch '\$Version\s*=\s*"1\.0\.4"' -or
-    $nodePackage -notmatch "releaseVersion\s*=\s*'1\.0\.4'") {
-  throw 'Every release builder must default to v1.0.4.'
+if ($build -notmatch '\$Version\s*=\s*"1\.1\.0"' -or $ue4ssBuild -notmatch '\$Version\s*=\s*"1\.1\.0"' -or
+    $nodePackage -notmatch "releaseVersion\s*=\s*'1\.1\.0'") {
+  throw 'Every release builder must default to v1.1.0.'
 }
 foreach ($token in @(
   'generate_progressive_hook_catalog.js', 'trustedManifestCandidateCount', 'canaryPrearmed',
@@ -120,7 +139,9 @@ foreach ($defaultToken in @(
   'progressiveObservationEnabled = false', 'canaryCandidateId = unassigned',
   'canaryHookPathFingerprint = unassigned', 'canaryValidationDepth = 0',
   'trustedCandidateSelections',
-  'relicCountValidationEnabled = false'
+  'relicCountValidationEnabled = false',
+  'readinessCampaignEnabled = false', 'readinessPeerSnapshotsEnabled = false',
+  'readinessInventoryStage = disabled'
 )) {
   if ($verify -notmatch [regex]::Escape($defaultToken)) { throw "Release verification is missing safe default: $defaultToken" }
 }
@@ -129,6 +150,9 @@ if ($verify -notmatch [regex]::Escape('coverage-catalog-v1.schema.json')) {
 }
 if ($verify -notmatch [regex]::Escape('snapshot-observation-v1.schema.json')) {
   throw 'Release verification does not require the snapshot observation schema.'
+}
+if ($verify -notmatch 'Assert-CrabRuntimeProbeReadinessSamplerSafety') {
+  throw 'Release verification does not enforce the readiness sampler safety closure.'
 }
 if ($verify -notmatch [regex]::Escape('INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md')) {
   throw 'Release verification does not require the hook observer incident notice.'
@@ -142,9 +166,9 @@ if ($build -notmatch 'generate_crabsync_coverage_catalog\.js.+--validate') {
 if ($workflow -notmatch 'generate_progressive_hook_catalog\.js\s+--validate' -or
     $workflow -notmatch 'generate_progressive_hook_catalog\.js\s+--self-test' -or
     $workflow -notmatch [regex]::Escape('advanced-research') -or
-    $workflow -notmatch [regex]::Escape('CrabRuntimeProbe-v1.0.4-win-x64.zip') -or
-    $workflow -notmatch [regex]::Escape('CrabRuntimeProbe-v1.0.4-UE4SS.zip')) {
-  throw 'Windows CI must validate/self-test the progressive catalog, render the research page, and verify both v1.0.4 archives.'
+    $workflow -notmatch [regex]::Escape('CrabRuntimeProbe-v1.1.0-win-x64.zip') -or
+    $workflow -notmatch [regex]::Escape('CrabRuntimeProbe-v1.1.0-UE4SS.zip')) {
+  throw 'Windows CI must validate/self-test the progressive catalog, render the research page, and verify both v1.1.0 archives.'
 }
 foreach ($profileToken in @(
   'snapshot-observation', 'snapshotSamplerEnabled', 'gameplayHooksEnabled',
@@ -201,8 +225,12 @@ $normalRule = @($schema.allOf | Where-Object {
 $researchRule = @($schema.allOf | Where-Object {
   [string]$_.'if'.properties.profileId.const -eq 'progressive-broad-observation'
 }) | Select-Object -First 1
+$readinessRule = @($schema.allOf | Where-Object {
+  [string]$_.'if'.properties.profileId.const -eq 'crabsync-readiness-campaign'
+}) | Select-Object -First 1
 $normalSafety = $normalRule.then.properties.safety.properties
 $researchSafety = $researchRule.then.properties.safety.properties
+$readinessSafety = $readinessRule.then.properties.safety.properties
 if ($null -eq $normalRule -or $normalSafety.hooksDisabled.const -ne $true -or
     $normalSafety.controlledResearchHooks.const -ne $false -or
     $normalSafety.compatibilityValidated.const -ne $false -or
@@ -218,6 +246,20 @@ if ($null -eq $researchRule -or $researchSafety.writesDisabled.const -ne $true -
     $researchSafety.compatibilityValidated.const -ne $true -or
     $researchSafety.trustedDepthEnforced.const -ne $true) {
   throw 'Progressive evidence bundles must require compatible, depth-enforced controlled hooks with every non-hook unsafe path disabled.'
+}
+if ($null -eq $readinessRule -or $readinessSafety.writesDisabled.const -ne $true -or
+    $readinessSafety.rpcCallsDisabled.const -ne $true -or
+    $readinessSafety.mutationDisabled.const -ne $true -or
+    $readinessSafety.rawIdentityDisabled.const -ne $true -or
+    $readinessSafety.hudHookDisabled.const -ne $true -or
+    $readinessSafety.hooksDisabled.const -ne $true -or
+    $readinessSafety.runtimeDiscoveryDisabled.const -ne $true -or
+    $readinessSafety.inventoryStagesDisabled.const -ne $true -or
+    $readinessSafety.controlledResearchHooks.const -ne $false -or
+    $readinessSafety.compatibilityValidated.const -ne $false -or
+    $readinessSafety.trustedDepthEnforced.const -ne $false -or
+    [int]$readinessSafety.activeCanaries.const -ne 0) {
+  throw 'Readiness evidence bundles must require hook-free, discovery-free, inventory-disabled, read-only safety.'
 }
 
 $liveStatusSchema = Get-Content -Raw -LiteralPath $liveStatusSchemaPath | ConvertFrom-Json -ErrorAction Stop
@@ -277,20 +319,90 @@ foreach ($schemaName in @(
   }
 }
 
+$readinessSchemaContracts = @(
+  [pscustomobject]@{
+    Path = $readinessManifestSchemaPath
+    Identity = 'readiness-campaign-manifest-v1'
+    RecordType = $null
+  },
+  [pscustomobject]@{
+    Path = $peerSnapshotSchemaPath
+    Identity = 'peer-snapshot-v1'
+    RecordType = 'readiness-peer-snapshot'
+  },
+  [pscustomobject]@{
+    Path = $terminalLifecycleSchemaPath
+    Identity = 'terminal-lifecycle-v1'
+    RecordType = 'readiness-lifecycle-terminal'
+  }
+)
+foreach ($contract in $readinessSchemaContracts) {
+  $readinessSchema = Get-Content -Raw -LiteralPath $contract.Path | ConvertFrom-Json -ErrorAction Stop
+  if ([string]$readinessSchema.'$schema' -ne 'https://json-schema.org/draft/2020-12/schema' -or
+      [string]$readinessSchema.'$id' -notmatch [regex]::Escape("$($contract.Identity).schema.json") -or
+      $readinessSchema.additionalProperties -ne $false) {
+    throw "$($contract.Identity) is not a closed, versioned schema."
+  }
+  if ($null -ne $contract.RecordType -and [string]$readinessSchema.properties.recordType.const -ne $contract.RecordType) {
+    throw "$($contract.Identity) has the wrong fixed recordType."
+  }
+}
+$readinessManifestSchema = Get-Content -Raw -LiteralPath $readinessManifestSchemaPath | ConvertFrom-Json -ErrorAction Stop
+if ([string]$readinessManifestSchema.properties.schemaVersion.const -ne 'readiness-campaign-manifest-v1' -or
+    [string]$readinessManifestSchema.properties.profileId.const -ne 'crabsync-readiness-campaign' -or
+    [string]$readinessManifestSchema.properties.inventoryStage.const -ne 'disabled' -or
+    $readinessManifestSchema.properties.peerSnapshotsEnabled.const -ne $true -or
+    $readinessManifestSchema.properties.safety.properties.hooks.const -ne $false -or
+    $readinessManifestSchema.properties.safety.properties.runtimeDiscovery.const -ne $false -or
+    $readinessManifestSchema.properties.safety.properties.deepInventory.const -ne $false) {
+  throw 'Readiness manifest must remain paired, hook-free, discovery-free, and inventory-disabled.'
+}
+$peerSnapshotSchema = Get-Content -Raw -LiteralPath $peerSnapshotSchemaPath | ConvertFrom-Json -ErrorAction Stop
+$terminalLifecycleSchema = Get-Content -Raw -LiteralPath $terminalLifecycleSchemaPath | ConvertFrom-Json -ErrorAction Stop
+if ([string]$readinessManifestSchema.'$defs'.pairId.pattern -ne '^readiness-pair-[a-f0-9]{24}$' -or
+    [string]$peerSnapshotSchema.'$defs'.pairId.pattern -ne '^readiness-pair-[a-f0-9]{24}$' -or
+    [string]$terminalLifecycleSchema.'$defs'.pairId.pattern -ne '^readiness-pair-[a-f0-9]{24}$') {
+  throw 'Readiness schemas must accept only dashboard-derived pair IDs, never the human correlation code.'
+}
+if ([string]$peerSnapshotSchema.properties.readinessPairId.'$ref' -ne '#/$defs/pairId' -or
+    [string]$terminalLifecycleSchema.properties.readinessPairId.'$ref' -ne '#/$defs/pairId' -or
+    [string]$peerSnapshotSchema.'$defs'.scalarField.properties.value.type[0] -ne 'number' -or
+    [string]$peerSnapshotSchema.'$defs'.equipmentField.properties.value.'$ref' -ne '#/$defs/fingerprint' -or
+    [string]$peerSnapshotSchema.'$defs'.subject.properties.authorityStatus.enum[0] -ne 'runtime-authority') {
+  throw 'Readiness peer schema must bound scalar values, fingerprints, and authority classifications.'
+}
+foreach ($readinessSchema in @($peerSnapshotSchema, $terminalLifecycleSchema)) {
+  $readinessSafetySchema = if ($null -ne $readinessSchema.properties.safety.properties) {
+    $readinessSchema.properties.safety.properties
+  } else {
+    $readinessSchema.'$defs'.safety.properties
+  }
+  if ($readinessSchema.properties.schemaVersion.const -ne 1 -or
+      [string]$readinessSchema.properties.profileId.const -ne 'crabsync-readiness-campaign' -or
+      $readinessSafetySchema.hooksDisabled.const -ne $true -or
+      $readinessSafetySchema.runtimeDiscoveryDisabled.const -ne $true -or
+      $readinessSafetySchema.inventoryStagesDisabled.const -ne $true -or
+      $readinessSafetySchema.rawIdentityDisabled.const -ne $true) {
+    throw 'Readiness event schemas must enforce the hook-free, local-only safety contract.'
+  }
+}
+
 $releaseDocsText = ''
-foreach ($docRelative in @('CHANGELOG.md', 'docs\CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md', 'docs\CRABSYNC_FULL_CAMPAIGN_GUIDE.md')) {
+foreach ($docRelative in @('CHANGELOG.md', 'docs\CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md', 'docs\CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md', 'docs\CRABSYNC_FULL_CAMPAIGN_GUIDE.md')) {
   $docPath = Join-Path $repoRoot $docRelative
-  if (-not (Test-Path -LiteralPath $docPath -PathType Leaf)) { throw "Missing v1.0.4 release documentation: $docRelative" }
+  if (-not (Test-Path -LiteralPath $docPath -PathType Leaf)) { throw "Missing v1.1.0 release documentation: $docRelative" }
   $releaseDocsText += "`n" + (Get-Content -Raw -LiteralPath $docPath)
 }
 foreach ($requiredText in @(
   'Normal Play Guide', 'Progressive Broad Observation', 'OnRep_IslandRewardRarity',
   'Depth 0', 'Depth 7', 'Registered but not naturally observed', 'Needs revalidation',
   'Quarantined', 'compatibility', 'three clean runs', 'unattributed',
-  'local relic count increased', 'pickup callback observed'
+  'local relic count increased', 'pickup callback observed',
+  'CrabSync Readiness Campaign', 'local-only', 'remote visibility',
+  'inventory', 'field test', 'not CrabSync'
 )) {
   if ($releaseDocsText -notmatch [regex]::Escape($requiredText)) {
-    throw "Release documentation does not cover required v1.0.4 concept: $requiredText"
+    throw "Release documentation does not cover required v1.1.0 concept: $requiredText"
   }
 }
 

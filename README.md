@@ -3,8 +3,8 @@
 CrabRuntimeProbe is a standalone UE4SS Lua diagnostic/research mod for Crab Champions.
 It helps reverse engineer **safe runtime access rules** by combining object dump presence with in-session probe observations.
 
-Current release: **v1.0.4**. See the
-[release notes](docs/CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md),
+Current release: **v1.1.0**. See the
+[release notes](docs/CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md),
 [campaign and research guide](docs/CRABSYNC_FULL_CAMPAIGN_GUIDE.md), and
 [changelog](CHANGELOG.md).
 
@@ -51,7 +51,7 @@ For normal use, extract the `CrabRuntimeProbe-v*-win-x64.zip` release and open
 packaged payload, and prepares the read-only campaign without Git, Node, or a
 development SDK.
 
-For v1.0.4, close the game and old dashboard, extract the complete ZIP into a
+For v1.1.0, close the game and old dashboard, extract the complete ZIP into a
 new empty folder, and use **Start play guide** once to install the packaged
 payload. Do not merge an old release directory or restore v1.0.2 configuration,
 trusted manifests, or runtime modules. Preserve old evidence ZIPs separately.
@@ -162,6 +162,24 @@ See the [full campaign guide](docs/CRABSYNC_FULL_CAMPAIGN_GUIDE.md) for the exac
 multiplayer actions, status meanings, crash recovery, coverage rules, and safety
 boundary. A successful snapshot campaign is read/state-transition evidence;
 it is never write/apply proof.
+
+## CrabSync Readiness Campaign
+
+v1.1.0 adds an explicit **CrabSync Readiness Campaign** for one host and one
+joined client. It is a separate opt-in preparation flow: the host creates a
+short correlation code, the joined client enters it, and each machine stores
+only a derived opaque pair ID in its local manifest and evidence. The code
+itself is not exported.
+
+The campaign is local-only and read-only. It can collect bounded local
+PlayerState scalar/lifecycle evidence and pair the two completed bundles
+offline. It does not enumerate remote PlayerState objects, so remote visibility
+is still unresolved. It also keeps inventory traversal, transport, and every
+write/apply path disabled. A combined report must show those gates as waiting
+or blocked rather than treating a paired run as CrabSync proof.
+
+For the two-machine field-test procedure, crash-triage limits, and package
+contents, read the [v1.1.0 release notes](docs/CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md).
 
 ## Evidence-driven documentation pipeline
 
@@ -426,14 +444,14 @@ CrabInvSync template and excludes CrabInvSync gameplay code, servers, raw object
 dumps, runtime logs, `.git`, and `node_modules`.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version 1.0.4
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version 1.1.0
 ```
 
 Build and verify the staging directory without creating a ZIP:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version 1.0.4 -NoZip
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -BundlePath dist\CrabRuntimeProbe-v1.0.4-win-x64
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version 1.1.0 -NoZip
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -BundlePath dist\CrabRuntimeProbe-v1.1.0-win-x64
 ```
 
 The ZIP contains the WPF dashboard, `Payload/` game overlay, campaign/checklist

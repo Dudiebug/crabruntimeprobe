@@ -211,10 +211,89 @@ local function parseBuildInfo(lines)
   return info
 end
 
+-- A paired-readiness manifest is shareable evidence.  Do not serialize every
+-- ad-hoc config scalar in that profile: the human correlation code is intended
+-- to remain dashboard-local, and an allowlist makes accidental aliases fail
+-- closed as well.
+local READINESS_MANIFEST_CONFIG_KEYS = {
+  enabled = true,
+  mode = true,
+  tickDriver = true,
+  writeJsonlResults = true,
+  campaignProfile = true,
+  readinessCampaignEnabled = true,
+  readinessPairId = true,
+  readinessManifestId = true,
+  readinessEnabledChannels = true,
+  readinessPeerSnapshotsEnabled = true,
+  readinessMaxPeers = true,
+  readinessHealthIntervalSeconds = true,
+  readinessScalarIntervalSeconds = true,
+  readinessUnchangedHeartbeatSeconds = true,
+  readinessTerminalSnapshotEnabled = true,
+  readinessInventoryStage = true,
+  fullObserveEnabled = true,
+  snapshotSamplerEnabled = true,
+  snapshotSampleIntervalSeconds = true,
+  snapshotUnchangedHeartbeatSeconds = true,
+  statusWriterEnabled = true,
+  campaignName = true,
+  campaignId = true,
+  campaignSessionId = true,
+  machineId = true,
+  selectedRole = true,
+  campaignGeneration = true,
+  probeSet = true,
+  allowHudTickHook = true,
+  allowUnknownRoleProbes = true,
+  allowJoinedClientDeepProbes = true,
+  allowDeepArrayProbes = true,
+  allowInventoryInfoProbes = true,
+  allowHealthProbes = true,
+  allowIdentityProbes = true,
+  allowRawIdentityEvidence = true,
+  allowResourceVisibilityProbes = true,
+  allowCrystalsReadProbes = true,
+  allowSlotsReadProbes = true,
+  allowSafeScalarWatchProbes = true,
+  allowPerkDataAssetCatalogProbes = true,
+  allowMaxSafePlayRecorderProbes = true,
+  allowInventoryArrayShallowProbes = true,
+  allowInventoryArrayShapeConfirmProbes = true,
+  allowInventoryUserdataIntrospectionProbes = true,
+  allowInventoryArrayCountProbes = true,
+  allowInventoryElementDataAssetReadProbes = true,
+  allowPassiveObservationHooks = true,
+  allowFullObserveInventoryStages = true,
+  allowFullObserveRuntimeDiscovery = true,
+  allowWriteProbes = true,
+  allowRpcProbes = true,
+  progressiveObservationEnabled = true,
+  progressiveHooksArmed = true
+}
+
 local function configSnapshot(config)
   local snapshot = {}
+  local readinessProfile = tostring(config.campaignProfile or '') == 'crabsync-readiness-campaign'
+  local function isDerivedReadinessPair(value)
+    local suffix = tostring(value or ''):match('^readiness%-pair%-(.*)$')
+    return suffix ~= nil and #suffix == 24 and suffix:match('^[0-9a-f]+$') ~= nil
+  end
+  local function isReadinessManifestId(value)
+    local text = tostring(value or '')
+    return #text >= 8 and #text <= 128 and text:match('^readiness%-manifest%-%w[%w_%-]*$') ~= nil
+  end
   for k, v in pairs(config) do
-    if type(v) == 'string' or type(v) == 'number' or type(v) == 'boolean' then
+    local key = tostring(k)
+    if readinessProfile and READINESS_MANIFEST_CONFIG_KEYS[key] ~= true then
+      -- A readiness manifest has no generic extension fields.
+    elseif key == 'correlationCode' or key == 'readinessCorrelationCode' or key == 'readinessPairCode' then
+      -- Human-entered codes never belong in generic session manifests.
+    elseif key == 'readinessPairId' then
+      snapshot[key] = isDerivedReadinessPair(v) and tostring(v) or 'unassigned'
+    elseif key == 'readinessManifestId' then
+      snapshot[key] = isReadinessManifestId(v) and tostring(v) or 'unassigned'
+    elseif type(v) == 'string' or type(v) == 'number' or type(v) == 'boolean' then
       snapshot[k] = v
     end
   end
@@ -294,6 +373,24 @@ function evidenceWriter.new(sessionId, config)
     return self:writeEncodedLine(json.encode(record))
   end
 
+  -- Readiness records have closed schemas.  They must not pass through
+  -- writeEvidence(), which adds generic legacy keys such as `timestamp`,
+  -- `game`, and `safetyGates` that would invalidate those contracts.
+  function o:writeReadinessRecord(record)
+    if self.config.writeJsonlResults == false then return true end
+    if type(record) ~= 'table'
+      or record.schemaVersion ~= 1
+      or tostring(record.sessionId or '') ~= tostring(self.sessionId) then
+      return false
+    end
+    local recordType = tostring(record.recordType or '')
+    local readinessSchema = tostring(record.readinessSchema or '')
+    local supported = (recordType == 'readiness-peer-snapshot' and readinessSchema == 'peer-snapshot-v1')
+      or (recordType == 'readiness-lifecycle-terminal' and readinessSchema == 'terminal-lifecycle-v1')
+    if not supported then return false end
+    return self:writeEncodedLine(json.encode(record))
+  end
+
   function o:writeSessionManifest(buildInfoLines)
     local existingText = readFile(self.manifestPath) or readFile(self.manifestPath .. '.previous')
       or readFile(self.fallbackManifestPath) or readFile(self.fallbackManifestPath .. '.previous')
@@ -329,7 +426,7 @@ function evidenceWriter.new(sessionId, config)
       game = 'Crab Champions',
       mod = 'CrabRuntimeProbe',
       schemaVersion = self.config.fullObserveEnabled == true and 2 or 1,
-      runtimeProbeVersion = '1.0.4',
+      runtimeProbeVersion = '1.1.0',
       buildInfo = parseBuildInfo(buildInfoLines),
       config = configSnapshot(self.config),
       probeSet = tostring(self.config.probeSet),

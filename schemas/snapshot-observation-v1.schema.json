@@ -51,7 +51,7 @@
     "selectedRole": { "enum": ["host", "joined-client"] },
     "observedRole": { "enum": ["host", "joined-client", "solo", "unknown"] },
     "observationProfile": {
-      "enum": ["normal-play-guide", "progressive-broad-observation"]
+      "enum": ["normal-play-guide", "crabsync-readiness-campaign", "progressive-broad-observation"]
     },
     "worldFingerprint": {
       "type": ["string", "null"],
@@ -156,6 +156,18 @@
       "else": {
         "properties": {
           "safety": { "properties": { "hooksDisabled": { "const": true } } }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "observationProfile": { "const": "crabsync-readiness-campaign" } },
+        "required": ["observationProfile"]
+      },
+      "then": {
+        "properties": {
+          "safety": { "properties": { "hooksDisabled": { "const": true } } },
+          "category": { "enum": ["health", "crystals", "slots", "equipment"] }
         }
       }
     }

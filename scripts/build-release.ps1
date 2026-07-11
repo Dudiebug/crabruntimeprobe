@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$')]
-  [string]$Version = "1.0.4",
+  [string]$Version = "1.1.0",
   [string]$OutputDir = "dist",
   [ValidateSet("win-x64")]
   [string]$Runtime = "win-x64",
@@ -102,6 +102,16 @@ try {
       throw "Missing progressive release artifact: $requiredArtifact"
     }
   }
+  foreach ($readinessSchemaName in @(
+    "readiness-campaign-manifest-v1.schema.json",
+    "peer-snapshot-v1.schema.json",
+    "terminal-lifecycle-v1.schema.json"
+  )) {
+    $readinessSchemaPath = Join-Path $RepoRoot "schemas\$readinessSchemaName"
+    if (-not (Test-Path -LiteralPath $readinessSchemaPath -PathType Leaf)) {
+      throw "Missing readiness release schema: $readinessSchemaName"
+    }
+  }
   $progressiveDefaults = Get-Content -Raw -LiteralPath $progressiveDefaultsPath | ConvertFrom-Json -ErrorAction Stop
   $candidateCatalog = Get-Content -Raw -LiteralPath $candidateCatalogPath | ConvertFrom-Json -ErrorAction Stop
   $trustedManifest = Get-Content -Raw -LiteralPath $trustedManifestPath | ConvertFrom-Json -ErrorAction Stop
@@ -135,6 +145,7 @@ try {
     Copy-RequiredFile -Source (Join-Path $RepoRoot $file) -Destination (Join-Path $BundleRoot $file)
   }
   foreach ($doc in @(
+    "CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md",
     "CRABSYNC_FULL_CAMPAIGN_GUIDE.md",
     "CRABSYNC_COVERAGE_CATALOG.md",
     "INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md",
@@ -181,6 +192,9 @@ try {
       campaignControl = "campaign-control-v1"
       evidenceBundle = "evidence-bundle-v1"
       coverageCatalog = "coverage-catalog-v1"
+      readinessCampaignManifest = "readiness-campaign-manifest-v1"
+      peerSnapshot = "peer-snapshot-v1"
+      terminalLifecycle = "terminal-lifecycle-v1"
       compatibilityFingerprint = "compatibility-fingerprint-v1"
       hookBreadcrumb = "hook-breadcrumb-v1"
       hookCandidateCatalog = "hook-candidate-catalog-v1"

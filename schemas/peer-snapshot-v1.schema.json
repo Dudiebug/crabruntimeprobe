@@ -1,0 +1,192 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/peer-snapshot-v1.schema.json",
+  "title": "CrabRuntimeProbe readiness peer snapshot v1",
+  "description": "Bounded, read-only local and peer-visible PlayerState observations. Values are scalar or fingerprints only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "recordType", "event", "readinessSchema", "campaignId", "campaignGeneration", "sessionId", "machineId", "sequence", "timestampUtc", "selectedRole", "observedRole", "authorityStatus", "profileId", "readinessPairId", "lifecycle", "source", "subjectCap", "subjects", "result", "changeKind", "dirtyEvidence", "crashSuspected", "safety"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "recordType": { "const": "readiness-peer-snapshot" },
+    "event": { "const": "Readiness.PeerSnapshot" },
+    "readinessSchema": { "const": "peer-snapshot-v1" },
+    "campaignId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "campaignGeneration": { "type": "integer", "minimum": 1 },
+    "sessionId": { "$ref": "#/$defs/id" },
+    "machineId": { "$ref": "#/$defs/id" },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "timestampUtc": { "type": "string", "format": "date-time", "maxLength": 64 },
+    "selectedRole": { "enum": ["host", "joined-client"] },
+    "observedRole": { "enum": ["host", "joined-client", "solo", "unknown"] },
+    "authorityStatus": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "profileId": { "const": "crabsync-readiness-campaign" },
+    "readinessPairId": { "$ref": "#/$defs/pairId" },
+    "lifecycle": { "$ref": "#/$defs/lifecycle" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["worldFingerprint", "localPlayerStateFingerprint"],
+      "properties": {
+        "worldFingerprint": { "$ref": "#/$defs/fingerprint" },
+        "localPlayerStateFingerprint": { "$ref": "#/$defs/fingerprint" }
+      }
+    },
+    "subjectCap": { "type": "integer", "minimum": 1, "maximum": 4 },
+    "subjects": {
+      "type": "array",
+      "maxItems": 4,
+      "items": { "$ref": "#/$defs/subject" }
+    },
+    "result": { "enum": ["ok", "partial", "error", "unsupported"] },
+    "changeKind": { "enum": ["initial", "changed", "unchanged-heartbeat", "lifecycle-reset"] },
+    "dirtyEvidence": { "type": "boolean" },
+    "crashSuspected": { "type": "boolean" },
+    "safety": { "$ref": "#/$defs/safety" }
+  },
+  "$defs": {
+    "id": { "type": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Za-z0-9_-]+$" },
+    "pairId": { "type": "string", "pattern": "^readiness-pair-[a-f0-9]{24}$" },
+    "fingerprint": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_-]+$" },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "generation", "context", "stable"],
+      "properties": {
+        "state": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "generation": { "type": "integer", "minimum": 0 },
+        "context": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "stable": { "type": "boolean" }
+      }
+    },
+    "diagnostic": {
+      "type": "string",
+      "maxLength": 240,
+      "pattern": "^[A-Za-z0-9 ._-]*$"
+    },
+    "scalarField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["observed", "unavailable", "unsupported", "deferred", "error"] },
+        "value": { "type": ["number", "boolean"] },
+        "reason": { "$ref": "#/$defs/diagnostic" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "observed" } }, "required": ["status"] },
+          "then": { "required": ["value"], "not": { "required": ["reason"] } },
+          "else": { "not": { "required": ["value"] } }
+        }
+      ]
+    },
+    "equipmentField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["observed", "unavailable", "unsupported", "deferred", "error"] },
+        "value": { "$ref": "#/$defs/fingerprint" },
+        "valueFingerprint": { "$ref": "#/$defs/fingerprint" },
+        "reason": { "$ref": "#/$defs/diagnostic" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "observed" } }, "required": ["status"] },
+          "then": { "required": ["value", "valueFingerprint"], "not": { "required": ["reason"] } },
+          "else": { "not": { "anyOf": [{ "required": ["value"] }, { "required": ["valueFingerprint"] }] } }
+        }
+      ]
+    },
+    "category": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result", "fields"],
+      "properties": {
+        "result": { "enum": ["ok", "partial", "error", "unsupported"] },
+        "fields": { "type": "object" }
+      }
+    },
+    "healthFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currentHealth", "currentMaxHealth", "baseMaxHealth", "maxHealthMultiplier"],
+      "properties": {
+        "currentHealth": { "$ref": "#/$defs/scalarField" },
+        "currentMaxHealth": { "$ref": "#/$defs/scalarField" },
+        "baseMaxHealth": { "$ref": "#/$defs/scalarField" },
+        "maxHealthMultiplier": { "$ref": "#/$defs/scalarField" }
+      }
+    },
+    "crystalsFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["crystals"],
+      "properties": { "crystals": { "$ref": "#/$defs/scalarField" } }
+    },
+    "slotsFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["weaponModSlots", "abilityModSlots", "meleeModSlots", "perkSlots"],
+      "properties": {
+        "weaponModSlots": { "$ref": "#/$defs/scalarField" },
+        "abilityModSlots": { "$ref": "#/$defs/scalarField" },
+        "meleeModSlots": { "$ref": "#/$defs/scalarField" },
+        "perkSlots": { "$ref": "#/$defs/scalarField" }
+      }
+    },
+    "equipmentFields": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["weaponFingerprint", "abilityFingerprint", "meleeFingerprint"],
+      "properties": {
+        "weaponFingerprint": { "$ref": "#/$defs/equipmentField" },
+        "abilityFingerprint": { "$ref": "#/$defs/equipmentField" },
+        "meleeFingerprint": { "$ref": "#/$defs/equipmentField" }
+      }
+    },
+    "healthCategory": { "allOf": [{ "$ref": "#/$defs/category" }, { "properties": { "fields": { "$ref": "#/$defs/healthFields" } } }] },
+    "crystalsCategory": { "allOf": [{ "$ref": "#/$defs/category" }, { "properties": { "fields": { "$ref": "#/$defs/crystalsFields" } } }] },
+    "slotsCategory": { "allOf": [{ "$ref": "#/$defs/category" }, { "properties": { "fields": { "$ref": "#/$defs/slotsFields" } } }] },
+    "equipmentCategory": { "allOf": [{ "$ref": "#/$defs/category" }, { "properties": { "fields": { "$ref": "#/$defs/equipmentFields" } } }] },
+    "subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["playerStateFingerprint", "relation", "visibility", "authorityStatus", "observedRole", "stability", "categoryResults"],
+      "properties": {
+        "playerStateFingerprint": { "$ref": "#/$defs/fingerprint" },
+        "relation": { "enum": ["local", "remote-visible"] },
+        "visibility": { "enum": ["local", "remote-visible"] },
+        "authorityStatus": { "enum": ["runtime-authority", "runtime-non-authority", "unknown"] },
+        "observedRole": { "enum": ["host", "joined-client", "solo", "unknown"] },
+        "stability": { "type": "string", "enum": ["stable", "warming", "unavailable"] },
+        "categoryResults": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["health", "crystals", "slots", "equipment"],
+          "properties": {
+            "health": { "$ref": "#/$defs/healthCategory" },
+            "crystals": { "$ref": "#/$defs/crystalsCategory" },
+            "slots": { "$ref": "#/$defs/slotsCategory" },
+            "equipment": { "$ref": "#/$defs/equipmentCategory" }
+          }
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["writesDisabled", "rpcCallsDisabled", "mutationDisabled", "hooksDisabled", "runtimeDiscoveryDisabled", "inventoryStagesDisabled", "rawIdentityDisabled"],
+      "properties": {
+        "writesDisabled": { "const": true },
+        "rpcCallsDisabled": { "const": true },
+        "mutationDisabled": { "const": true },
+        "hooksDisabled": { "const": true },
+        "runtimeDiscoveryDisabled": { "const": true },
+        "inventoryStagesDisabled": { "const": true },
+        "rawIdentityDisabled": { "const": true }
+      }
+    }
+  }
+}

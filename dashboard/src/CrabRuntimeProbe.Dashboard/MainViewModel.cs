@@ -44,6 +44,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _campaignName = "CrabSync Full Observe";
     private string _gameDirectory = string.Empty;
     private CampaignRole _selectedRole = CampaignRole.Host;
+    private string _readinessCorrelationCode = string.Empty;
     private string _activity = "Loading campaign resources...";
     private string _lastBundle = string.Empty;
     private bool _needsCoverageOnly = true;
@@ -84,6 +85,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         DetectGameCommand = new RelayCommand(DetectGame);
         PrepareAndStartCommand = new AsyncRelayCommand(PrepareAndStartAsync);
         PrepareCommand = new AsyncRelayCommand(PrepareAsync);
+        GenerateReadinessCodeCommand = new RelayCommand(GenerateReadinessCode, () => SelectedRole == CampaignRole.Host);
+        PrepareReadinessCampaignCommand = new AsyncRelayCommand(PrepareReadinessCampaignAsync);
         StartMonitoringCommand = new AsyncRelayCommand(StartMonitoringAsync);
         OpenGameCommand = new AsyncRelayCommand(OpenGameAsync);
         ResumeCommand = new AsyncRelayCommand(ResumeAsync);
@@ -118,6 +121,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand DetectGameCommand { get; }
     public ICommand PrepareAndStartCommand { get; }
     public ICommand PrepareCommand { get; }
+    public ICommand GenerateReadinessCodeCommand { get; }
+    public ICommand PrepareReadinessCampaignCommand { get; }
     public ICommand StartMonitoringCommand { get; }
     public ICommand OpenGameCommand { get; }
     public ICommand ResumeCommand { get; }
@@ -156,10 +161,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             Raise(nameof(IsHosting));
             Raise(nameof(IsJoiningFriend));
             Raise(nameof(RoleSummary));
+            Raise(nameof(ReadinessSetupHint));
+            if (GenerateReadinessCodeCommand is RelayCommand generate) generate.RaiseCanExecuteChanged();
             RefreshPlayGuide();
             _ = SavePreferencesAsync();
         }
     }
+
+    public string ReadinessCorrelationCode
+    {
+        get => _readinessCorrelationCode;
+        set => Set(ref _readinessCorrelationCode, value);
+    }
+
+    public string ReadinessSetupHint => SelectedRole == CampaignRole.Host
+        ? "Host: generate a local eight-character code, share it out of band, then prepare this computer."
+        : "Joined client: enter the host's eight-character code exactly, then prepare this computer.";
+
+    public string ReadinessInventorySummary => "Inventory collection is deferred and disabled. This profile never enables wrapper, count, item, metadata, or enhancement reads.";
+
+    public string ReadinessPairingSummary => Campaign?.ReadinessPairing is { } pairing
+        ? $"Prepared pair {pairing.PairId} - inventory {pairing.InventoryStage}"
+        : "No readiness campaign prepared on this computer.";
+
+    public bool IsReadinessCampaignPrepared => Campaign is { } campaign
+                                              && ReadinessCampaignContracts.IsReadinessProfile(campaign.ProfileId)
+                                              && campaign.ReadinessPairing is { HasValidPair: true };
 
     public bool IsHosting
     {
@@ -236,6 +263,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             RaiseCommands();
             Raise(nameof(CampaignIdentitySummary));
             Raise(nameof(ElapsedSummary));
+            Raise(nameof(ReadinessPairingSummary));
+            Raise(nameof(IsReadinessCampaignPrepared));
         }
     }
     public LiveStatusReadResult Status
@@ -400,6 +429,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 _selectedRole = Campaign.Role;
                 _gameDirectory = Campaign.GameDirectory;
                 _lastBundle = Campaign.LastBundlePath;
+                if (Campaign.ReadinessPairing is { } pairing)
+                    _readinessCorrelationCode = pairing.CorrelationCode;
                 Raise(nameof(CampaignName));
                 Raise(nameof(SelectedRole));
                 Raise(nameof(IsHosting));
@@ -542,6 +573,48 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         catch (Exception ex) { ShowError(ex); }
     }
 
+    private void GenerateReadinessCode()
+    {
+        if (SelectedRole != CampaignRole.Host)
+        {
+            Activity = "Only the host generates a pairing code; enter the host code on a joined client.";
+            return;
+        }
+
+        ReadinessCorrelationCode = ReadinessCampaignContracts.GenerateCorrelationCode();
+        Activity = "Readiness pairing code generated locally. Share it out of band with the joined client.";
+    }
+
+    private async Task PrepareReadinessCampaignAsync()
+    {
+        try
+        {
+            var installation = RequireInstallation();
+            if (new GameProcessService().IsRunning(installation))
+                throw new InvalidOperationException("Close Crab Champions before preparing a different readiness campaign.");
+            Activity = "Preparing the bounded, read-only paired readiness campaign...";
+            Campaign = await RequireCampaignService().PrepareReadinessCampaignAsync(
+                installation,
+                SelectedRole,
+                ReadinessCampaignContracts.DefaultCampaignName,
+                string.IsNullOrWhiteSpace(ReadinessCorrelationCode) ? null : ReadinessCorrelationCode,
+                dashboardExecutablePath: Environment.ProcessPath,
+                cancellationToken: _lifetime.Token);
+            var pairing = Campaign.ReadinessPairing
+                          ?? throw new InvalidDataException("Readiness preparation did not retain local pairing state.");
+            ReadinessCorrelationCode = pairing.CorrelationCode;
+            _researchPlan = null;
+            _researchJournal = null;
+            _researchClassification = null;
+            _autoCollected = false;
+            _gameExitDetector.Reset();
+            RefreshResearchDashboard();
+            Activity = "Readiness campaign prepared. Share the displayed local code out of band, then start both games when ready.";
+            await SavePreferencesAsync();
+        }
+        catch (Exception ex) { ShowError(ex); }
+    }
+
     private Task StartResearchAsync() => PrepareResearchGenerationAsync(
         ResearchRunType.Combined, null, null, launchGame: true);
 
@@ -678,6 +751,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             SelectedRole = Campaign.Role;
             CampaignName = Campaign.CampaignName;
             GameDirectory = Campaign.GameDirectory;
+            if (Campaign.ReadinessPairing is { } pairing)
+                ReadinessCorrelationCode = pairing.CorrelationCode;
             await LoadResearchWorkspaceAsync(Campaign);
             _gameExitDetector.Reset();
             Activity = "Campaign resumed - resume marker written; start monitoring when ready";

@@ -40,6 +40,22 @@ local DEFAULT_CONFIG = {
   allowInventoryUserdataIntrospectionProbes = false,
   allowInventoryArrayCountProbes = false,
   allowInventoryElementDataAssetReadProbes = false,
+  -- The default profile remains the hook-free Normal Play Guide.  The
+  -- readiness campaign is opt-in and is rejected unless both selectors are
+  -- present, so a copied config cannot accidentally turn a normal session
+  -- into paired research.
+  campaignProfile = 'normal-play-guide',
+  readinessCampaignEnabled = false,
+  readinessPairId = 'unassigned',
+  readinessManifestId = 'unassigned',
+  readinessEnabledChannels = '',
+  readinessPeerSnapshotsEnabled = false,
+  readinessMaxPeers = 4,
+  readinessHealthIntervalSeconds = 1,
+  readinessScalarIntervalSeconds = 1,
+  readinessUnchangedHeartbeatSeconds = 30,
+  readinessTerminalSnapshotEnabled = true,
+  readinessInventoryStage = 'disabled',
   fullObserveEnabled = false,
   snapshotSamplerEnabled = false,
   snapshotSampleIntervalSeconds = 3,
@@ -239,8 +255,93 @@ local function validFullObserveIdentity(config)
     and generation ~= nil and generation >= 1 and math.floor(generation) == generation
 end
 
+local function validReadinessPairId(value)
+  local suffix = tostring(value or ''):match('^readiness%-pair%-(.*)$')
+  return suffix ~= nil and #suffix == 24 and suffix:match('^[0-9a-f]+$') ~= nil
+end
+
+local function validReadinessChannels(value)
+  local expected = {
+    health = true,
+    crystals = true,
+    slots = true,
+    equipment = true,
+    ['peer-snapshots'] = true
+  }
+  local seen = {}
+  local count = 0
+  for channel in tostring(value or ''):gmatch('[^,%s]+') do
+    if expected[channel] ~= true or seen[channel] then return false end
+    seen[channel] = true
+    count = count + 1
+  end
+  return count == 5 and seen.health and seen.crystals and seen.slots and seen.equipment and seen['peer-snapshots']
+end
+
+local function boundedNumber(value, minimum, maximum)
+  local numberValue = tonumber(value)
+  return numberValue ~= nil and numberValue == numberValue
+    and numberValue >= minimum and numberValue <= maximum
+end
+
+local function readinessCampaignRequested(config)
+  return config.readinessCampaignEnabled == true
+    or tostring(config.campaignProfile or '') == 'crabsync-readiness-campaign'
+end
+
+local function validReadinessCampaignConfiguration(config)
+  if config.readinessCampaignEnabled ~= true
+    or tostring(config.campaignProfile or '') ~= 'crabsync-readiness-campaign'
+    or tostring(config.campaignId or '') ~= 'crabsync-readiness-campaign' then
+    return false
+  end
+  if config.progressiveObservationEnabled == true or config.progressiveHooksArmed == true
+    or config.fullObserveEnabled ~= true or config.snapshotSamplerEnabled ~= true
+    or config.statusWriterEnabled ~= true or config.writeJsonlResults ~= true
+    or tostring(config.probeSet or '') ~= 'crabsync-readiness-campaign'
+    or tostring(config.mode or '') ~= 'observe'
+    or config.readinessPeerSnapshotsEnabled ~= true or config.readinessTerminalSnapshotEnabled ~= true
+    or tostring(config.readinessInventoryStage or '') ~= 'disabled'
+    or not validReadinessPairId(config.readinessPairId)
+    or not validOpaqueId(config.readinessManifestId, 8, 128)
+    or not validReadinessChannels(config.readinessEnabledChannels)
+    or not boundedNumber(config.readinessMaxPeers, 1, 4)
+    or not boundedNumber(config.readinessHealthIntervalSeconds, 0.25, 5)
+    or not boundedNumber(config.readinessScalarIntervalSeconds, 1, 60)
+    or not boundedNumber(config.readinessUnchangedHeartbeatSeconds, 10, 600)
+    or tonumber(config.readinessHealthIntervalSeconds) ~= tonumber(config.readinessScalarIntervalSeconds)
+    or tonumber(config.snapshotSampleIntervalSeconds) ~= tonumber(config.readinessScalarIntervalSeconds)
+    or tonumber(config.snapshotUnchangedHeartbeatSeconds) ~= tonumber(config.readinessUnchangedHeartbeatSeconds) then
+    return false
+  end
+  for _, key in ipairs({
+    'allowHudTickHook', 'allowWriteProbes', 'allowRpcProbes', 'allowRawIdentityEvidence',
+    'allowUnknownRoleProbes', 'allowJoinedClientDeepProbes', 'allowDeepArrayProbes',
+    'allowInventoryInfoProbes', 'allowHealthProbes', 'allowIdentityProbes',
+    'allowResourceVisibilityProbes', 'allowCrystalsReadProbes', 'allowSlotsReadProbes',
+    'allowSafeScalarWatchProbes', 'allowPerkDataAssetCatalogProbes',
+    'allowMaxSafePlayRecorderProbes', 'allowInventoryArrayShallowProbes',
+    'allowInventoryArrayShapeConfirmProbes', 'allowInventoryUserdataIntrospectionProbes',
+    'allowInventoryArrayCountProbes', 'allowInventoryElementDataAssetReadProbes',
+    'allowPassiveObservationHooks', 'allowFullObserveInventoryStages', 'allowFullObserveRuntimeDiscovery'
+  }) do
+    if config[key] == true then return false end
+  end
+  return true
+end
+
+-- A readiness run deliberately has a second explicit selector.  This keeps
+-- the existing hook-free profile unchanged and keeps progressive canary
+-- research mutually exclusive with paired scalar observation.
+local readinessCampaign = readinessCampaignRequested(cfg)
+if readinessCampaign and not validReadinessCampaignConfiguration(cfg) then
+  log('[CrabRuntimeProbe] ERROR: readiness campaign requires campaignProfile=crabsync-readiness-campaign, readinessCampaignEnabled=true, and hooks disabled')
+  return
+end
+
 local sessionId = os.date('!%Y%m%dT%H%M%SZ')
-if cfg.fullObserveEnabled == true and cfg.probeSet == 'crabsync-full-observe' then
+if cfg.fullObserveEnabled == true
+  and (cfg.probeSet == 'crabsync-full-observe' or cfg.probeSet == 'crabsync-readiness-campaign') then
   if validFullObserveIdentity(cfg) then
     sessionId = tostring(cfg.campaignSessionId)
   else
@@ -282,6 +383,10 @@ log('[CrabRuntimeProbe] safety allowHudTickHook=' .. tostring(cfg.allowHudTickHo
   .. ' allowInventoryUserdataIntrospectionProbes=' .. tostring(cfg.allowInventoryUserdataIntrospectionProbes)
   .. ' allowInventoryArrayCountProbes=' .. tostring(cfg.allowInventoryArrayCountProbes)
   .. ' allowInventoryElementDataAssetReadProbes=' .. tostring(cfg.allowInventoryElementDataAssetReadProbes)
+  .. ' campaignProfile=' .. tostring(cfg.campaignProfile)
+  .. ' readinessCampaignEnabled=' .. tostring(cfg.readinessCampaignEnabled)
+  .. ' readinessPeerSnapshotsEnabled=' .. tostring(cfg.readinessPeerSnapshotsEnabled)
+  .. ' readinessInventoryStage=' .. tostring(cfg.readinessInventoryStage)
   .. ' fullObserveEnabled=' .. tostring(cfg.fullObserveEnabled)
   .. ' allowPassiveObservationHooks=' .. tostring(cfg.allowPassiveObservationHooks)
   .. ' allowFullObserveInventoryStages=' .. tostring(cfg.allowFullObserveInventoryStages)
@@ -318,6 +423,7 @@ local progressiveCampaign = progressiveSelection ~= nil
   and cfg.fullObserveEnabled == true
   and cfg.snapshotSamplerEnabled == true
   and cfg.probeSet == 'crabsync-full-observe'
+  and readinessCampaign ~= true
 local snapshotCampaign = not progressiveCampaign
   and cfg.fullObserveEnabled == true
   and cfg.snapshotSamplerEnabled == true
@@ -328,11 +434,16 @@ if not snapshotCampaign and not progressiveCampaign then
   state = runner.new(cfg, safe, writer, evidenceWriter)
 end
 local fullObserveCoordinator = nil
-if snapshotCampaign or progressiveCampaign then
+if snapshotCampaign or progressiveCampaign or readinessCampaign then
   local coordinatorOk = false
   local coordinatorFactory = nil
   if progressiveCampaign then
     coordinatorOk, coordinatorFactory = pcall(require, "progressive_observe_coordinator")
+  elseif readinessCampaign then
+    -- Keep paired readiness separate from the normal sampler closure. The
+    -- readiness module may evolve independently while Normal Play Guide stays
+    -- hook-free and never imports paired-readiness code.
+    coordinatorOk, coordinatorFactory = pcall(require, "readiness_observe_coordinator")
   else
     -- Keep this protected literal import stable: the normal-sampler source guard
     -- proves that default mode cannot drift onto the progressive hook path.
@@ -349,7 +460,7 @@ if snapshotCampaign or progressiveCampaign then
     log('[CrabRuntimeProbe] ERROR: full observe coordinator unavailable: ' .. tostring(coordinatorFactory))
   end
 end
-if (snapshotCampaign or progressiveCampaign) and fullObserveCoordinator == nil then
+if (snapshotCampaign or progressiveCampaign or readinessCampaign) and fullObserveCoordinator == nil then
   log('[CrabRuntimeProbe] ERROR: snapshot campaign coordinator unavailable; no tick source will be registered')
   return
 end

@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -61,6 +62,7 @@ public sealed class EvidenceCollector
     private readonly DashboardResourceLocator _resourceLocator;
     private readonly ChecklistDefinitionLoader _checklistLoader;
     private readonly SnapshotEvidenceService _snapshotEvidenceService;
+    private readonly ReadinessEvidenceReader _readinessEvidenceReader;
 
     public EvidenceCollector(
         LiveStatusReader? statusReader = null,
@@ -70,7 +72,8 @@ public sealed class EvidenceCollector
         EvidenceRedactor? redactor = null,
         DashboardResourceLocator? resourceLocator = null,
         ChecklistDefinitionLoader? checklistLoader = null,
-        SnapshotEvidenceService? snapshotEvidenceService = null)
+        SnapshotEvidenceService? snapshotEvidenceService = null,
+        ReadinessEvidenceReader? readinessEvidenceReader = null)
     {
         _statusReader = statusReader ?? new LiveStatusReader();
         _fallbackChecklistReducer = checklistReducer ?? new ChecklistReducer();
@@ -80,6 +83,7 @@ public sealed class EvidenceCollector
         _resourceLocator = resourceLocator ?? new DashboardResourceLocator();
         _checklistLoader = checklistLoader ?? new ChecklistDefinitionLoader();
         _snapshotEvidenceService = snapshotEvidenceService ?? new SnapshotEvidenceService();
+        _readinessEvidenceReader = readinessEvidenceReader ?? new ReadinessEvidenceReader();
     }
 
     public async Task<CollectionResult> CollectAsync(
@@ -117,16 +121,57 @@ public sealed class EvidenceCollector
             .ConfigureAwait(false);
         var copiedEvidence = 0;
         var omitted = new List<string>();
+        var activeProfile = ActiveProfile(status, state);
+        var readinessProfile = ReadinessCampaignContracts.IsReadinessProfile(activeProfile)
+                               || ReadinessCampaignContracts.IsReadinessProfile(state.ProfileId);
+        if (readinessProfile) activeProfile = ReadinessCampaignContracts.ProfileId;
+        var activeObservationProfile = ObservationProfileIds.Normalize(activeProfile);
+        var replayScope = SnapshotReplayScope.FromCampaign(state, activeObservationProfile);
+        var progressiveProfile = activeObservationProfile.Equals(
+            ObservationProfileIds.ProgressiveBroadObservation, StringComparison.Ordinal);
         var dirty = status.Snapshot.DirtyEvidence || status.UsedLastGood || !status.HasSnapshot;
-        var activeProfile = ActiveProfile(status);
-        var progressiveProfile = activeProfile.Equals(
-            "progressive-broad-observation", StringComparison.OrdinalIgnoreCase);
+        var expectedTerminalStale = false;
+        ReadinessCampaignReport? readinessReport = null;
 
-        if (!progressiveProfile)
+        if (readinessProfile)
+        {
+            if (state.ReadinessPairing is not { HasValidPair: true } pairing)
+            {
+                omitted.Add("readiness pairing: the saved campaign has no valid opaque pair identifier");
+                dirty = true;
+            }
+            else
+            {
+                try
+                {
+                    var scope = ReadinessEvidenceScope.FromCampaign(state, pairing.PairId);
+                    var readinessEvidence = await _readinessEvidenceReader.ReadAsync(
+                            state.StatusDirectory, scope, cancellationToken)
+                        .ConfigureAwait(false);
+                    readinessReport = ReadinessReportReducer.Reduce(scope, readinessEvidence);
+                    if (readinessEvidence.Rejections.Count > 0)
+                    {
+                        omitted.Add($"readiness evidence: {readinessEvidence.Rejections.Count} current-session row(s) rejected");
+                        dirty = true;
+                    }
+                    if (readinessReport.HasDirtyEvidence) dirty = true;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+                {
+                    omitted.Add($"readiness evidence: unavailable during collection ({ex.Message})");
+                    dirty = true;
+                }
+            }
+        }
+
+        // Readiness has its own closed peer/terminal record reader. Feeding those rows
+        // through the snapshot-observation parser would falsely mark every valid
+        // readiness record malformed and make a clean paired bundle permanently dirty.
+        if (!progressiveProfile && !readinessProfile)
         {
             try
             {
-                var snapshotEvidence = await _snapshotEvidenceService.LoadAsync(state, cancellationToken)
+                var snapshotEvidence = await _snapshotEvidenceService.LoadAsync(state, replayScope, cancellationToken)
                     .ConfigureAwait(false);
                 if (snapshotEvidence.Replay.Rejections.Count > 0)
                 {
@@ -135,10 +180,16 @@ public sealed class EvidenceCollector
                 }
                 else
                 {
+                    expectedTerminalStale = IsExpectedTerminalStale(
+                        status,
+                        state,
+                        abnormalProcessExit,
+                        snapshotEvidence.Replay.AcceptedRows > 0);
                     status = _snapshotEvidenceService.Merge(
                         status,
                         snapshotEvidence.Replay,
-                        SnapshotReplayScope.FromCampaign(state));
+                        replayScope,
+                        allowExpectedTerminalStale: expectedTerminalStale);
                 }
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -147,6 +198,13 @@ public sealed class EvidenceCollector
                 dirty = true;
             }
         }
+        else if (readinessProfile && readinessReport is not null)
+        {
+            expectedTerminalStale = IsExpectedReadinessTerminalStale(
+                status, state, abnormalProcessExit, readinessReport);
+        }
+        if (status.IsStale && !expectedTerminalStale)
+            dirty = true;
 
         DashboardResources? resources = null;
         try
@@ -166,7 +224,9 @@ public sealed class EvidenceCollector
             ? await ValidateControlledResearchAsync(state, resources, cancellationToken).ConfigureAwait(false)
             : ResearchSafetyValidation.NotApplicable;
         var bundleSafety = SafetyFrom(status, researchSafety);
-        var bundleProfileId = progressiveProfile ? "progressive-broad-observation" : "crabsync-full-observe";
+        var bundleProfileId = readinessProfile
+            ? ReadinessCampaignContracts.ProfileId
+            : progressiveProfile ? "progressive-broad-observation" : "crabsync-full-observe";
         if (!bundleSafety.IsAcceptableForProfile(bundleProfileId))
         {
             omitted.Add(progressiveProfile
@@ -178,15 +238,28 @@ public sealed class EvidenceCollector
         foreach (var source in EnumerateApprovedScriptEvidence(state))
         {
             cancellationToken.ThrowIfCancellationRequested();
+            var name = Path.GetFileName(source);
+            if (name.Equals("readiness_campaign_manifest.json", StringComparison.OrdinalIgnoreCase))
+            {
+                var manifestValidation = await ValidateReadinessManifestAsync(
+                        source, state, cancellationToken)
+                    .ConfigureAwait(false);
+                if (!manifestValidation.Accepted)
+                {
+                    omitted.Add($"{name}: {manifestValidation.Reason}");
+                    dirty = true;
+                    continue;
+                }
+            }
             if (IsCanonicalEvidence(source))
             {
                 var validation = await ValidateCanonicalAsync(
-                    source, state.Generation, activeRuntimeSession, progressiveProfile &&
+                    source, state.Generation, activeRuntimeSession, activeObservationProfile, progressiveProfile &&
                     bundleSafety.IsAcceptableForProfile(bundleProfileId), cancellationToken).ConfigureAwait(false);
                 if (!validation.Accepted)
                 {
                     omitted.Add($"{Path.GetFileName(source)}: {validation.Reason}");
-                    dirty |= !validation.UnrelatedSession;
+                    dirty |= !validation.UnrelatedScope;
                     continue;
                 }
 
@@ -198,7 +271,6 @@ public sealed class EvidenceCollector
             }
             else
             {
-                var name = Path.GetFileName(source);
                 var destinationRoot = name.StartsWith("live_status", StringComparison.OrdinalIgnoreCase)
                     ? statusOutputDirectory
                     : IsResearchArtifact(name) ? researchDirectory : derivedDirectory;
@@ -298,6 +370,15 @@ public sealed class EvidenceCollector
         await AtomicFile.WriteTextAsync(
             Path.Combine(bundleDirectory, "missing_action_list.md"),
             RenderMissingActions(checklist, coverage, omitted), cancellationToken).ConfigureAwait(false);
+        if (readinessReport is not null)
+        {
+            await AtomicFile.WriteTextAsync(
+                Path.Combine(bundleDirectory, "readiness_report.md"),
+                ReadinessReportReducer.RenderMarkdown(readinessReport), cancellationToken).ConfigureAwait(false);
+            await AtomicFile.WriteTextAsync(
+                Path.Combine(bundleDirectory, "readiness_report.json"),
+                JsonSerializer.Serialize(readinessReport, JsonOptions), cancellationToken).ConfigureAwait(false);
+        }
         var summaryPath = Path.Combine(bundleDirectory, "diagnostic_summary.txt");
         await AtomicFile.WriteTextAsync(
             summaryPath,
@@ -432,12 +513,193 @@ public sealed class EvidenceCollector
         && value.ValueKind is JsonValueKind.True or JsonValueKind.False
         && value.GetBoolean() == expected;
 
-    private static string ActiveProfile(LiveStatusReadResult status)
+    private static string ActiveProfile(LiveStatusReadResult status, LocalCampaignState state)
     {
-        if (!status.HasSnapshot) return string.Empty;
-        if (!string.IsNullOrWhiteSpace(status.Snapshot.Runtime.ActiveProfile))
+        if (status.HasSnapshot && !string.IsNullOrWhiteSpace(status.Snapshot.Runtime.ActiveProfile))
             return status.Snapshot.Runtime.ActiveProfile.Trim();
-        return status.Snapshot.CampaignId.Trim();
+        if (status.HasSnapshot && !string.IsNullOrWhiteSpace(status.Snapshot.CampaignId))
+            return status.Snapshot.CampaignId.Trim();
+        return state.ProfileId.Trim();
+    }
+
+    private static async Task<ReadinessManifestValidation> ValidateReadinessManifestAsync(
+        string path,
+        LocalCampaignState state,
+        CancellationToken cancellationToken)
+    {
+        if (!ReadinessCampaignContracts.IsReadinessProfile(state.ProfileId)
+            || state.ReadinessPairing is not { HasValidPair: true } pairing)
+        {
+            return new ReadinessManifestValidation(false, "manifest is present for a campaign without a valid readiness pairing");
+        }
+
+        try
+        {
+            await using var stream = File.OpenRead(path);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !HasExactlyProperties(root, ReadinessManifestProperties))
+                return new ReadinessManifestValidation(false, "manifest has an unknown field or invalid object shape");
+            if (root.TryGetProperty("correlationCode", out _)
+                || !Text(root, "schemaVersion", string.Empty).Equals(ReadinessCampaignContracts.ManifestSchema, StringComparison.Ordinal)
+                || !Text(root, "campaignId", string.Empty).Equals(state.CampaignId, StringComparison.Ordinal)
+                || !root.TryGetProperty("campaignGeneration", out var generation)
+                || !generation.TryGetInt64(out var manifestGeneration) || manifestGeneration != state.Generation
+                || !Text(root, "sessionId", string.Empty).Equals(state.SessionId, StringComparison.Ordinal)
+                || !Text(root, "machineId", string.Empty).Equals(state.MachineId, StringComparison.Ordinal)
+                || !Text(root, "selectedRole", string.Empty).Equals(state.Role.ToContract(), StringComparison.Ordinal)
+                || !Text(root, "profileId", string.Empty).Equals(ReadinessCampaignContracts.ProfileId, StringComparison.Ordinal)
+                || !Text(root, "pairId", string.Empty).Equals(pairing.PairId, StringComparison.Ordinal)
+                || !Text(root, "manifestId", string.Empty).Equals(pairing.ManifestId, StringComparison.Ordinal)
+                || !ReadinessCampaignContracts.IsDeferredInventoryStage(Text(root, "inventoryStage", string.Empty))
+                || !ReadinessManifestSafetyIsStrict(root)
+                || !ReadinessManifestChannelsAreComplete(root)
+                || !ReadinessManifestIntervalsAreValid(root))
+            {
+                return new ReadinessManifestValidation(false, "manifest does not match the paired hook-free readiness contract");
+            }
+
+            return new ReadinessManifestValidation(true, string.Empty);
+        }
+        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        {
+            return new ReadinessManifestValidation(false, $"invalid JSON ({ex.Message})");
+        }
+    }
+
+    private static bool ReadinessManifestChannelsAreComplete(JsonElement root)
+    {
+        if (!root.TryGetProperty("enabledChannels", out var channels) || channels.ValueKind != JsonValueKind.Array)
+            return false;
+        if (channels.GetArrayLength() != 5 || channels.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String))
+            return false;
+        return ReadinessCampaignContracts.HasRequiredChannels(channels.EnumerateArray()
+            .Select(item => item.GetString() ?? string.Empty));
+    }
+
+    private static bool ReadinessManifestSafetyIsStrict(JsonElement root)
+    {
+        if (!root.TryGetProperty("peerSnapshotsEnabled", out var peers)
+            || peers.ValueKind != JsonValueKind.True || !peers.GetBoolean()
+            || !root.TryGetProperty("maxPeers", out var maxPeers) || !maxPeers.TryGetInt32(out var max)
+            || max is < 1 or > ReadinessCampaignContracts.MaxPeers
+            || !root.TryGetProperty("safety", out var safety) || safety.ValueKind != JsonValueKind.Object
+            || !HasExactlyProperties(safety, ReadinessManifestSafetyProperties))
+            return false;
+        return IsBoolean(safety, "readOnly", true)
+               && IsBoolean(safety, "writeProbes", false)
+               && IsBoolean(safety, "rpcCalls", false)
+               && IsBoolean(safety, "mutation", false)
+               && IsBoolean(safety, "hooks", false)
+               && IsBoolean(safety, "runtimeDiscovery", false)
+               && IsBoolean(safety, "deepInventory", false)
+               && IsBoolean(safety, "rawIdentity", false);
+    }
+
+    private static bool ReadinessManifestIntervalsAreValid(JsonElement root)
+    {
+        if (!root.TryGetProperty("intervals", out var intervals) || intervals.ValueKind != JsonValueKind.Object
+            || !HasExactlyProperties(intervals, ReadinessManifestIntervalProperties)
+            || !intervals.TryGetProperty("healthSeconds", out var health) || !health.TryGetDouble(out var healthSeconds)
+            || !intervals.TryGetProperty("scalarSeconds", out var scalar) || !scalar.TryGetDouble(out var scalarSeconds)
+            || !intervals.TryGetProperty("inventorySeconds", out var inventory) || !inventory.TryGetDouble(out var inventorySeconds)
+            || !intervals.TryGetProperty("unchangedHeartbeatSeconds", out var heartbeat) || !heartbeat.TryGetDouble(out var heartbeatSeconds))
+            return false;
+        return healthSeconds is >= 0.25 and <= 5
+               && scalarSeconds is >= 1 and <= 60
+               && inventorySeconds is >= 2 and <= 120
+               && heartbeatSeconds is >= 10 and <= 600;
+    }
+
+    private static bool HasOnlyProperties(JsonElement root, IReadOnlySet<string> allowed) =>
+        root.ValueKind == JsonValueKind.Object && root.EnumerateObject().All(property => allowed.Contains(property.Name));
+
+    private static bool HasExactlyProperties(JsonElement root, IReadOnlySet<string> allowed) =>
+        root.ValueKind == JsonValueKind.Object && root.EnumerateObject().Count() == allowed.Count
+        && root.EnumerateObject().All(property => allowed.Contains(property.Name));
+
+    private static bool IsExpectedTerminalStale(
+        LiveStatusReadResult status,
+        LocalCampaignState state,
+        bool abnormalProcessExit,
+        bool hasCleanCurrentSnapshots)
+    {
+        if (abnormalProcessExit || !hasCleanCurrentSnapshots || !status.HasSnapshot || !status.IsStale
+            || status.UsedLastGood || status.Snapshot.DirtyEvidence || status.Snapshot.CrashSuspected)
+            return false;
+
+        var runtime = status.Snapshot.Runtime;
+        if (runtime.StopRequested || IsCleanTerminalRuntimeState(runtime.RuntimeProbeState))
+            return true;
+
+        // A stale status that still claims the game is running is acceptable only after
+        // the configured executable is actually gone. Any uncertainty remains dirty.
+        return !IsConfiguredGameProcessRunning(state);
+    }
+
+    private static bool IsExpectedReadinessTerminalStale(
+        LiveStatusReadResult status,
+        LocalCampaignState state,
+        bool abnormalProcessExit,
+        ReadinessCampaignReport report)
+    {
+        if (abnormalProcessExit || !status.HasSnapshot || !status.IsStale || status.UsedLastGood
+            || status.Snapshot.DirtyEvidence || status.Snapshot.CrashSuspected || report.HasDirtyEvidence
+            || report.PeerSnapshotCount == 0 || report.TerminalLifecycleCount == 0)
+            return false;
+
+        var runtime = status.Snapshot.Runtime;
+        return runtime.StopRequested || IsCleanTerminalRuntimeState(runtime.RuntimeProbeState)
+               || !IsConfiguredGameProcessRunning(state);
+    }
+
+    private static bool IsCleanTerminalRuntimeState(string? state) =>
+        state?.Trim().ToLowerInvariant() is "stopped" or "stop-requested" or "complete" or "completed";
+
+    private static bool IsConfiguredGameProcessRunning(LocalCampaignState state)
+    {
+        if (string.IsNullOrWhiteSpace(state.ExecutablePath) || !File.Exists(state.ExecutablePath)) return true;
+        var processNames = new[]
+        {
+            Path.GetFileNameWithoutExtension(state.ExecutablePath),
+            "CrabChampions",
+            "CrabChampions-Win64-Shipping"
+        }.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var processName in processNames)
+        {
+            Process[] candidates;
+            try
+            {
+                candidates = Process.GetProcessesByName(processName);
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
+                                       or System.ComponentModel.Win32Exception)
+            {
+                return true;
+            }
+
+            foreach (var candidate in candidates)
+            {
+                using (candidate)
+                {
+                    try
+                    {
+                        if (!candidate.HasExited) return true;
+                    }
+                    catch (Exception ex) when (ex is InvalidOperationException
+                                               or System.ComponentModel.Win32Exception
+                                               or UnauthorizedAccessException)
+                    {
+                        // If process identity cannot be verified, do not infer a clean exit.
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     private static bool IsResearchArtifact(string name) =>
@@ -641,50 +903,120 @@ public sealed class EvidenceCollector
         string source,
         long expectedGeneration,
         string activeSession,
+        string activeObservationProfile,
         bool allowControlledHooks,
         CancellationToken cancellationToken)
     {
+        var fileScope = ClassifyFileSession(source, activeSession);
+        var structuredJson = Path.GetExtension(source).Equals(".jsonl", StringComparison.OrdinalIgnoreCase)
+                             || Path.GetExtension(source).Equals(".json", StringComparison.OrdinalIgnoreCase);
+        if (fileScope == CanonicalScope.Foreign && !structuredJson)
+            return new CanonicalValidation(false, true, "belongs to another runtime session or prior campaign generation");
         var info = new FileInfo(source);
         if (info.Length > MaximumCollectedFileBytes)
+        {
+            if (fileScope == CanonicalScope.Foreign)
+                return new CanonicalValidation(false, true, "belongs to another runtime session or prior campaign generation");
             return new CanonicalValidation(false, false, "file exceeded the 64 MiB collection cap");
+        }
         var text = await File.ReadAllTextAsync(source, cancellationToken).ConfigureAwait(false);
-        if (_redactor.ContainsPrivateIdentity(text))
-            return new CanonicalValidation(false, false, "raw identity material detected; canonical bytes were omitted");
         try
         {
-            var objects = Path.GetExtension(source).Equals(".jsonl", StringComparison.OrdinalIgnoreCase)
+            var records = Path.GetExtension(source).Equals(".jsonl", StringComparison.OrdinalIgnoreCase)
                 ? text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)
-                    .Select(line => JsonDocument.Parse(line)).ToArray()
-                : new[] { JsonDocument.Parse(text) };
-            try
+                : new[] { text };
+            var foreignRecordSeen = false;
+            foreach (var record in records)
             {
-                foreach (var document in objects)
+                using var document = JsonDocument.Parse(record);
+                var root = document.RootElement;
+                var recordScope = ClassifyCanonicalScope(
+                    root,
+                    expectedGeneration,
+                    activeSession,
+                    activeObservationProfile);
+                if (recordScope == CanonicalScope.Foreign)
                 {
-                    var root = document.RootElement;
-                    if (ContainsUnsafeFlag(root, allowControlledHooks))
-                        return new CanonicalValidation(
-                            false,
-                            false,
-                            "unsafe write/RPC/hook/discovery/inventory-stage/raw-identity flag detected");
-                    var generation = FindInt64(root, "campaignGeneration", "generation");
-                    if (generation is not null && expectedGeneration > 0 && generation != expectedGeneration)
-                        return new CanonicalValidation(false, true, "belongs to a prior campaign generation");
-                    var session = FindText(root, "sessionId", "session");
-                    if (!string.IsNullOrWhiteSpace(session) && !string.IsNullOrWhiteSpace(activeSession)
-                        && !session.Equals(activeSession, StringComparison.OrdinalIgnoreCase))
-                        return new CanonicalValidation(false, true, "belongs to another runtime session");
+                    foreignRecordSeen = true;
+                    continue;
                 }
+                if (fileScope == CanonicalScope.Foreign && recordScope == CanonicalScope.Unscoped)
+                {
+                    foreignRecordSeen = true;
+                    continue;
+                }
+                if (fileScope == CanonicalScope.Foreign && recordScope == CanonicalScope.Active)
+                    return new CanonicalValidation(
+                        false,
+                        false,
+                        "canonical filename conflicts with an active-session record");
+                if (_redactor.ContainsPrivateIdentity(record))
+                    return new CanonicalValidation(
+                        false,
+                        false,
+                        "raw identity material detected; canonical bytes were omitted");
+                if (ContainsUnsafeFlag(root, allowControlledHooks))
+                    return new CanonicalValidation(
+                        false,
+                        false,
+                        "unsafe write/RPC/hook/discovery/inventory-stage/raw-identity flag detected");
             }
-            finally
-            {
-                foreach (var document in objects) document.Dispose();
-            }
+
+            if (foreignRecordSeen)
+                return new CanonicalValidation(
+                    false,
+                    true,
+                    "contains prior campaign generation, session, or observation-profile records");
         }
         catch (JsonException ex)
         {
+            if (fileScope == CanonicalScope.Foreign)
+                return new CanonicalValidation(false, true, "belongs to another runtime session or prior campaign generation");
             return new CanonicalValidation(false, false, $"invalid JSON ({ex.Message})");
         }
         return new CanonicalValidation(true, false, string.Empty);
+    }
+
+    private static CanonicalScope ClassifyFileSession(string source, string activeSession)
+    {
+        var stem = Path.GetFileNameWithoutExtension(source);
+        foreach (var prefix in new[] { "access_evidence_", "probe_results_", "session_manifest_" })
+        {
+            if (!stem.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+            var session = stem[prefix.Length..];
+            if (!string.IsNullOrWhiteSpace(session)
+                && !session.Equals(activeSession, StringComparison.OrdinalIgnoreCase))
+                return CanonicalScope.Foreign;
+            break;
+        }
+
+        return CanonicalScope.Active;
+    }
+
+    private static CanonicalScope ClassifyCanonicalScope(
+        JsonElement root,
+        long expectedGeneration,
+        string activeSession,
+        string activeObservationProfile)
+    {
+        var matchesActiveScope = false;
+        var generation = FindInt64(root, "campaignGeneration", "generation");
+        if (generation is not null && expectedGeneration > 0 && generation != expectedGeneration)
+            return CanonicalScope.Foreign;
+        if (generation is not null) matchesActiveScope = true;
+        var session = FindText(root, "sessionId", "session", "campaignSessionId");
+        if (!string.IsNullOrWhiteSpace(session) && !string.IsNullOrWhiteSpace(activeSession)
+            && !session.Equals(activeSession, StringComparison.OrdinalIgnoreCase))
+            return CanonicalScope.Foreign;
+        if (!string.IsNullOrWhiteSpace(session)) matchesActiveScope = true;
+        var profile = FindText(root, "observationProfile", "activeProfile", "profileId");
+        if (ObservationProfileIds.IsKnown(profile)
+            && !ObservationProfileIds.Normalize(profile).Equals(
+                ObservationProfileIds.Normalize(activeObservationProfile),
+                StringComparison.Ordinal))
+            return CanonicalScope.Foreign;
+        if (ObservationProfileIds.IsKnown(profile)) matchesActiveScope = true;
+        return matchesActiveScope ? CanonicalScope.Active : CanonicalScope.Unscoped;
     }
 
     private static bool ContainsUnsafeFlag(JsonElement element, bool allowControlledHooks)
@@ -725,20 +1057,40 @@ public sealed class EvidenceCollector
 
     private static long? FindInt64(JsonElement element, params string[] names)
     {
-        if (element.ValueKind != JsonValueKind.Object) return null;
-        foreach (var name in names)
-            if (element.TryGetProperty(name, out var value)
-                && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number)) return number;
+        foreach (var scope in ScopeContainers(element))
+        {
+            foreach (var name in names)
+            {
+                if (scope.TryGetProperty(name, out var value)
+                    && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number))
+                    return number;
+            }
+        }
         return null;
     }
 
     private static string FindText(JsonElement element, params string[] names)
     {
-        if (element.ValueKind != JsonValueKind.Object) return string.Empty;
-        foreach (var name in names)
-            if (element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
-                return value.GetString() ?? string.Empty;
+        foreach (var scope in ScopeContainers(element))
+        {
+            foreach (var name in names)
+            {
+                if (scope.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
+                    return value.GetString() ?? string.Empty;
+            }
+        }
         return string.Empty;
+    }
+
+    private static IEnumerable<JsonElement> ScopeContainers(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) yield break;
+        yield return root;
+        foreach (var name in new[] { "config", "runtime" })
+        {
+            if (root.TryGetProperty(name, out var nested) && nested.ValueKind == JsonValueKind.Object)
+                yield return nested;
+        }
     }
 
     private static IEnumerable<string> EnumerateApprovedScriptEvidence(LocalCampaignState state)
@@ -751,6 +1103,11 @@ public sealed class EvidenceCollector
             foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly))
             {
                 var name = Path.GetFileName(path);
+                // The dashboard writes the paired contract only in results. Do not let
+                // an old copied manifest beside config.txt create a second pairing source.
+                if (name.Equals("readiness_campaign_manifest.json", StringComparison.OrdinalIgnoreCase)
+                    && !Path.GetFullPath(root).Equals(Path.GetFullPath(state.StatusDirectory), StringComparison.OrdinalIgnoreCase))
+                    continue;
                 if (name.StartsWith("access_evidence_", StringComparison.OrdinalIgnoreCase)
                     || name.StartsWith("probe_results_", StringComparison.OrdinalIgnoreCase)
                     || name.StartsWith("session_manifest_", StringComparison.OrdinalIgnoreCase)
@@ -761,6 +1118,7 @@ public sealed class EvidenceCollector
                     || name.Equals("hook_validation_ledger.json", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("trusted_hook_manifest.json", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("hook_quarantine.json", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("readiness_campaign_manifest.json", StringComparison.OrdinalIgnoreCase)
                     || name.StartsWith("live_status", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("full_observe_progress.txt", StringComparison.OrdinalIgnoreCase)
                     || name.Equals("full_observe_sequence.txt", StringComparison.OrdinalIgnoreCase)
@@ -1022,7 +1380,14 @@ public sealed class EvidenceCollector
             .ToLowerInvariant();
     }
 
-    private sealed record CanonicalValidation(bool Accepted, bool UnrelatedSession, string Reason);
+    private enum CanonicalScope
+    {
+        Active,
+        Foreign,
+        Unscoped
+    }
+
+    private sealed record CanonicalValidation(bool Accepted, bool UnrelatedScope, string Reason);
     private sealed record ResearchSafetyValidation(
         bool ControlledResearchHooks,
         bool CompatibilityValidated,
@@ -1043,6 +1408,25 @@ public sealed class EvidenceCollector
         string CatalogSchemaVersion,
         string CatalogHash,
         IReadOnlyList<string> CopiedPaths);
+
+    private sealed record ReadinessManifestValidation(bool Accepted, string Reason);
+
+    private static readonly HashSet<string> ReadinessManifestProperties = new(StringComparer.Ordinal)
+    {
+        "schemaVersion", "manifestId", "campaignId", "campaignGeneration", "sessionId", "machineId",
+        "selectedRole", "profileId", "pairId", "preparedAtUtc", "inventoryStage", "enabledChannels",
+        "peerSnapshotsEnabled", "maxPeers", "intervals", "safety"
+    };
+
+    private static readonly HashSet<string> ReadinessManifestSafetyProperties = new(StringComparer.Ordinal)
+    {
+        "readOnly", "writeProbes", "rpcCalls", "mutation", "hooks", "runtimeDiscovery", "deepInventory", "rawIdentity"
+    };
+
+    private static readonly HashSet<string> ReadinessManifestIntervalProperties = new(StringComparer.Ordinal)
+    {
+        "healthSeconds", "scalarSeconds", "inventorySeconds", "unchangedHeartbeatSeconds"
+    };
 }
 
 public sealed class BundleCorrelationService
@@ -1053,6 +1437,16 @@ public sealed class BundleCorrelationService
         PropertyNameCaseInsensitive = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true
+    };
+    private static readonly HashSet<string> ReadinessManifestPropertyNames = new(StringComparer.Ordinal)
+    {
+        "schemaVersion", "manifestId", "campaignId", "campaignGeneration", "sessionId", "machineId",
+        "selectedRole", "profileId", "pairId", "preparedAtUtc", "inventoryStage", "enabledChannels",
+        "peerSnapshotsEnabled", "maxPeers", "intervals", "safety"
+    };
+    private static readonly HashSet<string> ReadinessManifestSafetyPropertyNames = new(StringComparer.Ordinal)
+    {
+        "readOnly", "writeProbes", "rpcCalls", "mutation", "hooks", "runtimeDiscovery", "deepInventory", "rawIdentity"
     };
 
     public async Task<CorrelationResult> CombineAsync(
@@ -1082,7 +1476,9 @@ public sealed class BundleCorrelationService
                                ?? throw new InvalidDataException($"Bundle manifest is invalid: {zipPaths[index]}");
                 var bundleRoot = Path.GetDirectoryName(manifestPath)!;
                 await ValidateManifestAsync(manifest, bundleRoot, cancellationToken).ConfigureAwait(false);
-                validated.Add(new ValidatedBundle(Path.GetFullPath(zipPaths[index]), bundleRoot, manifest));
+                var readinessPairId = await ReadReadinessPairIdAsync(manifest, bundleRoot, cancellationToken)
+                    .ConfigureAwait(false);
+                validated.Add(new ValidatedBundle(Path.GetFullPath(zipPaths[index]), bundleRoot, manifest, readinessPairId));
             }
 
             var manifests = validated.Select(item => item.Manifest).ToArray();
@@ -1097,6 +1493,10 @@ public sealed class BundleCorrelationService
                                  && !manifests.Any(item => item.CatalogHash.Equals("unknown", StringComparison.OrdinalIgnoreCase));
             var profileMatches = OneValue(manifests.Select(item => item.ProfileId))
                                  && !manifests.Any(item => item.ProfileId.Equals("unknown", StringComparison.OrdinalIgnoreCase));
+            var pairedReadinessCampaign = manifests.All(item => ReadinessCampaignContracts.IsReadinessProfile(item.ProfileId));
+            var readinessPairMatches = !pairedReadinessCampaign
+                                       || validated.All(item => ReadinessCampaignContracts.IsOpaquePairId(item.ReadinessPairId))
+                                       && OneValue(validated.Select(item => item.ReadinessPairId));
             var distinctMachines = manifests.Select(item => item.MachineId)
                 .Distinct(StringComparer.OrdinalIgnoreCase).Count() == manifests.Length;
             var distinctSessions = manifests.Select(item => item.SessionId)
@@ -1106,6 +1506,7 @@ public sealed class BundleCorrelationService
             var campaignMatches = campaignIdMatches && campaignNameMatches;
             var correlated = hasHost && hasJoined && campaignMatches && schemaMatches && catalogMatches
                              && profileMatches && distinctMachines && distinctSessions && intervalsOverlap && clean;
+            correlated &= readinessPairMatches;
 
             var destination = Path.Combine(Path.GetFullPath(outputRoot),
                 $"CrabRuntimeProbe-combined-{DateTimeOffset.UtcNow:yyyyMMddTHHmmssZ}");
@@ -1133,7 +1534,7 @@ public sealed class BundleCorrelationService
                 reportPath,
                 RenderCorrelation(manifests, hasHost, hasJoined, campaignIdMatches, campaignNameMatches,
                     schemaMatches, catalogMatches, profileMatches, distinctMachines, distinctSessions,
-                    intervalsOverlap, clean, correlated), cancellationToken).ConfigureAwait(false);
+                    intervalsOverlap, clean, pairedReadinessCampaign, readinessPairMatches, correlated), cancellationToken).ConfigureAwait(false);
             await AtomicFile.WriteTextAsync(
                 Path.Combine(destination, "correlation.json"),
                 JsonSerializer.Serialize(new
@@ -1146,6 +1547,8 @@ public sealed class BundleCorrelationService
                     schemaMatches,
                     catalogMatches,
                     profileMatches,
+                    pairedReadinessCampaign,
+                    readinessPairMatches,
                     distinctMachines,
                     distinctSessions,
                     intervalsOverlap,
@@ -1180,7 +1583,7 @@ public sealed class BundleCorrelationService
             throw new InvalidDataException("Manifest selectedRole is invalid.");
         if (manifest.PreparedAtUtc > manifest.CollectedAtUtc)
             throw new InvalidDataException("Manifest capture interval is inverted.");
-        if (manifest.ProfileId is not ("crabsync-full-observe" or "progressive-broad-observation")
+        if (manifest.ProfileId is not ("crabsync-full-observe" or "crabsync-readiness-campaign" or "progressive-broad-observation")
             || !IsSha256(manifest.CatalogHash))
             throw new InvalidDataException("Manifest profile/catalog identity is invalid.");
         if (!manifest.ManifestSelfExcluded) throw new InvalidDataException("Manifest must declare its self-exclusion.");
@@ -1210,6 +1613,96 @@ public sealed class BundleCorrelationService
         }
     }
 
+    private static async Task<string> ReadReadinessPairIdAsync(
+        BundleManifest manifest,
+        string bundleRoot,
+        CancellationToken cancellationToken)
+    {
+        if (!ReadinessCampaignContracts.IsReadinessProfile(manifest.ProfileId)) return string.Empty;
+
+        var paths = Directory.EnumerateFiles(bundleRoot, "readiness_campaign_manifest.json", SearchOption.AllDirectories)
+            .ToArray();
+        if (paths.Length != 1)
+            throw new InvalidDataException("A readiness bundle must include exactly one readiness campaign manifest.");
+
+        await using var stream = File.OpenRead(paths[0]);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken)
+            .ConfigureAwait(false);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object || !HasOnlyReadinessManifestProperties(root)
+            || root.TryGetProperty("correlationCode", out _)
+            || JsonText(root, "schemaVersion") != ReadinessCampaignContracts.ManifestSchema
+            || JsonText(root, "campaignId") != manifest.CampaignId
+            || !root.TryGetProperty("campaignGeneration", out var generation)
+            || !generation.TryGetInt64(out var generationValue) || generationValue != manifest.CampaignGeneration
+            || JsonText(root, "sessionId") != manifest.SessionId
+            || JsonText(root, "machineId") != manifest.MachineId
+            || JsonText(root, "selectedRole") != manifest.SelectedRole
+            || JsonText(root, "profileId") != ReadinessCampaignContracts.ProfileId
+            || !ReadinessCampaignContracts.IsDeferredInventoryStage(JsonText(root, "inventoryStage"))
+            || !ReadinessManifestChannelsComplete(root)
+            || !ReadinessManifestIntervalsValid(root)
+            || !ReadinessManifestStrictSafety(root))
+        {
+            throw new InvalidDataException("Readiness campaign manifest is missing, unsafe, or does not match the bundle identity.");
+        }
+
+        var pairId = JsonText(root, "pairId");
+        if (!ReadinessCampaignContracts.IsOpaquePairId(pairId))
+            throw new InvalidDataException("Readiness campaign manifest has an invalid derived pair ID.");
+        if (!ReadinessCampaignContracts.IsOpaqueIdentifier(JsonText(root, "manifestId")))
+            throw new InvalidDataException("Readiness campaign manifest has an invalid opaque manifest ID.");
+        return pairId;
+    }
+
+    private static bool HasOnlyReadinessManifestProperties(JsonElement root) =>
+        root.ValueKind == JsonValueKind.Object
+        && root.EnumerateObject().Count() == ReadinessManifestPropertyNames.Count
+        && root.EnumerateObject().All(property => ReadinessManifestPropertyNames.Contains(property.Name));
+
+    private static bool ReadinessManifestChannelsComplete(JsonElement root)
+    {
+        if (!root.TryGetProperty("enabledChannels", out var channels) || channels.ValueKind != JsonValueKind.Array
+            || channels.GetArrayLength() != 5 || channels.EnumerateArray().Any(item => item.ValueKind != JsonValueKind.String))
+            return false;
+        return ReadinessCampaignContracts.HasRequiredChannels(channels.EnumerateArray()
+            .Select(item => item.GetString() ?? string.Empty));
+    }
+
+    private static bool ReadinessManifestStrictSafety(JsonElement root)
+    {
+        if (!root.TryGetProperty("peerSnapshotsEnabled", out var peers) || peers.ValueKind != JsonValueKind.True
+            || !root.TryGetProperty("maxPeers", out var cap) || !cap.TryGetInt32(out var maxPeers)
+            || maxPeers is < 1 or > ReadinessCampaignContracts.MaxPeers
+            || !root.TryGetProperty("safety", out var safety) || safety.ValueKind != JsonValueKind.Object
+            || safety.EnumerateObject().Count() != ReadinessManifestSafetyPropertyNames.Count
+            || !safety.EnumerateObject().All(property => ReadinessManifestSafetyPropertyNames.Contains(property.Name)))
+            return false;
+        return JsonBooleanIs(safety, "readOnly", true)
+               && JsonBooleanIs(safety, "writeProbes", false)
+               && JsonBooleanIs(safety, "rpcCalls", false)
+               && JsonBooleanIs(safety, "mutation", false)
+               && JsonBooleanIs(safety, "hooks", false)
+               && JsonBooleanIs(safety, "runtimeDiscovery", false)
+               && JsonBooleanIs(safety, "deepInventory", false)
+               && JsonBooleanIs(safety, "rawIdentity", false);
+    }
+
+    private static bool ReadinessManifestIntervalsValid(JsonElement root)
+    {
+        if (!root.TryGetProperty("intervals", out var intervals) || intervals.ValueKind != JsonValueKind.Object
+            || intervals.EnumerateObject().Count() != 4
+            || !intervals.TryGetProperty("healthSeconds", out var health) || !health.TryGetDouble(out var healthSeconds)
+            || !intervals.TryGetProperty("scalarSeconds", out var scalar) || !scalar.TryGetDouble(out var scalarSeconds)
+            || !intervals.TryGetProperty("inventorySeconds", out var inventory) || !inventory.TryGetDouble(out var inventorySeconds)
+            || !intervals.TryGetProperty("unchangedHeartbeatSeconds", out var heartbeat) || !heartbeat.TryGetDouble(out var heartbeatSeconds))
+            return false;
+        return healthSeconds is >= 0.25 and <= 5
+               && scalarSeconds is >= 1 and <= 60
+               && inventorySeconds is >= 2 and <= 120
+               && heartbeatSeconds is >= 10 and <= 600;
+    }
+
     private static void ValidateManifestShape(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object
@@ -1231,6 +1724,16 @@ public sealed class BundleCorrelationService
             || count is < 0 or > 1)
             throw new InvalidDataException("Bundle safety field 'activeCanaries' is missing or invalid.");
     }
+
+    private static string JsonText(JsonElement element, string property) =>
+        element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty
+            : string.Empty;
+
+    private static bool JsonBooleanIs(JsonElement element, string property, bool expected) =>
+        element.TryGetProperty(property, out var value)
+        && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+        && value.GetBoolean() == expected;
 
     private static string NormalizeRelative(string path)
     {
@@ -1285,6 +1788,8 @@ public sealed class BundleCorrelationService
         bool distinctSessions,
         bool intervalsOverlap,
         bool clean,
+        bool pairedReadinessCampaign,
+        bool readinessPairMatches,
         bool correlated)
     {
         var builder = new StringBuilder("# Host/joined-client correlation\n\n");
@@ -1295,7 +1800,9 @@ public sealed class BundleCorrelationService
                      ("Bundle schemas compatible", schemaMatches), ("Catalog schema/hash compatible", catalogMatches),
                      ("Profiles compatible", profileMatches), ("Machine IDs unique", distinctMachines),
                      ("Runtime session IDs unique", distinctSessions), ("Capture intervals overlap", intervalsOverlap),
-                     ("All bundles clean and crash-free", clean), ("Correlation established", correlated)
+                     ("All bundles clean and crash-free", clean),
+                     ("Readiness pair IDs match", !pairedReadinessCampaign || readinessPairMatches),
+                     ("Correlation established", correlated)
                  })
             builder.Append("- ").Append(pair.Item1).Append(": ").Append(pair.Item2 ? "yes" : "no").Append('\n');
         builder.Append("\nOffline pairing proves only that compatible host and joined-client bundles overlap. It does not itself prove remote visibility; qualifying row-level evidence is still required.\n\n");
@@ -1312,7 +1819,7 @@ public sealed class BundleCorrelationService
         return builder.ToString();
     }
 
-    private sealed record ValidatedBundle(string ZipPath, string BundleRoot, BundleManifest Manifest);
+    private sealed record ValidatedBundle(string ZipPath, string BundleRoot, BundleManifest Manifest, string ReadinessPairId);
 }
 
 public static class SupportSummary

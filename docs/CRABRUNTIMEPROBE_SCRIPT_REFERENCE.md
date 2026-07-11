@@ -7,8 +7,8 @@ This map is based on the current `scripts/*.ps1` and `tools/*.js` files. Prefer 
 | Script | Category | What it does | When to run it | Inputs/parameters | Outputs | Touches game install | Changes RuntimeProbe config | Imports/regenerates docs |
 |---|---|---|---|---|---|---|---|---|
 | `Assert-CrabRuntimeProbeConfig.ps1` | validation | Shared functions for locating the repo, validating mod layout, validating safe config defaults, and writing `build_info.txt`. | Dot-sourced by other scripts. | Start path, config path, mod root, optional validation switches. | Validation errors or build info. | No direct install action. | No, validates defaults. | No. |
-| `build-release.ps1` | packaging | Builds the canonical v1.0.4 self-contained Windows dashboard and payload, validates both generated catalogs, requires empty trust/no prearmed canary, writes sanitized build metadata and a relative hash manifest, verifies, then optionally zips. | Canonical release packaging. | `-OutputDir`, `-Version` (default `1.0.4`), `-Runtime`, `-Configuration`, `-NoZip`. | `dist/CrabRuntimeProbe-v1.0.4-win-x64` and optional ZIP. | No. | No, rejects unsafe defaults. | No. |
-| `build-ue4ss-bundle.ps1` | packaging | Builds `dist/CrabRuntimeProbe-v<Version>-UE4SS`, copies UE4SS support plus every progressive artifact/schema/runtime module, writes clean-install guidance and sanitized manifests, verifies, then optionally zips. | Standalone UE4SS release packaging. | `-CrabInvSyncRoot`, `-OutputDir`, `-Version` (default `1.0.4`), `-NoZip`. | Bundle folder and optional zip under `dist/`. | No. | No, rejects unsafe defaults. | No. |
+| `build-release.ps1` | packaging | Builds the canonical v1.1.0 self-contained Windows dashboard and payload, validates both generated catalogs, requires empty trust/no prearmed canary, includes readiness modules/schemas, writes sanitized build metadata and a relative hash manifest, verifies, then optionally zips. | Canonical release packaging. | `-OutputDir`, `-Version` (default `1.1.0`), `-Runtime`, `-Configuration`, `-NoZip`. | `dist/CrabRuntimeProbe-v1.1.0-win-x64` and optional ZIP. | No. | No, rejects unsafe defaults. | No. |
+| `build-ue4ss-bundle.ps1` | packaging | Builds `dist/CrabRuntimeProbe-v<Version>-UE4SS`, copies UE4SS support plus progressive and readiness artifacts/schemas/runtime modules, writes clean-install guidance and sanitized manifests, verifies, then optionally zips. | Standalone UE4SS release packaging. | `-CrabInvSyncRoot`, `-OutputDir`, `-Version` (default `1.1.0`), `-NoZip`. | Bundle folder and optional zip under `dist/`. | No. | No, rejects unsafe defaults. | No. |
 | `export-client-folder.ps1` | packaging | Exports a clean copy of repo `client/` to `dist/CrabRuntimeProbe-client`, stamps build info, optionally zips. | Manual copy/export testing. | `-OutputPath`, `-Zip`. | Export folder and optional zip. | No. | No, validates source/exported config. | No. |
 | `import-latest-runtime-evidence.ps1` | import | Imports game-side results, regenerates access docs, and stages wiki docs. | After a play/test pass should become repo evidence. | `-From` results directory; defaults to Steam game results path. | New/updated `evidence/runtime/<session>/`, docs, `dist/wiki/`. | No. | No. | Yes. |
 | `install-client-to-game.ps1` | install | Installs `client/Mods/CrabRuntimeProbe` into game `Mods`, updates `Mods/mods.txt`, stamps build info, validates config. | Before running game-side probes. | Required `GameBinPath`. | Installed mod under game bin and `build_info.txt`. | Yes. | No, copies source defaults. | No. |
@@ -42,7 +42,7 @@ This map is based on the current `scripts/*.ps1` and `tools/*.js` files. Prefer 
 | `validate-latest-crash-bundle.ps1` | validation | Checks installed config, latest manifest/results/evidence, UE4SS log session/commit, crash folder, prepare marker, and stale artifact conditions. | After prepared health/watch/campaign runs. | `-GameBin`, `-ExpectedProbeSet`, `-ExpectedTickDriver`, `-ExpectedMode`, `-RequirePreparedRun`. | Validator report and exit code. | Reads game install. | No. | No. |
 | `verify-installed-client.ps1` | verify | Validates installed mod files, safe config defaults, and `Mods/mods.txt`. | After install. | Required `GameBinPath`. | Pass/fail plus installed paths. | Reads game install. | No. | No. |
 | `verify-release.ps1` | verify | Verifies canonical layout, dashboard version, progressive artifacts/schemas/modules, campaign identities, relative hashes, sanitized metadata, empty trust/no canary, and forbidden-file exclusions. | After canonical build or extracted ZIP. | Required `-BundlePath`. | Pass/fail. | No. | No. | No. |
-| `verify-ue4ss-bundle.ps1` | verify | Verifies UE4SS layout/support mods and the same v1.0.4 progressive identities, safe defaults, empty trust/no canary, hashes, sanitized metadata, and forbidden-file exclusions. | After UE4SS build or extracted ZIP. | Optional `BundlePath`; defaults latest bundle in `dist`. | Pass/fail. | No. | No. | No. |
+| `verify-ue4ss-bundle.ps1` | verify | Verifies UE4SS layout/support mods, v1.1.0 readiness identities, retained progressive identities, safe defaults, empty trust/no canary, hashes, sanitized metadata, and forbidden-file exclusions. | After UE4SS build or extracted ZIP. | Optional `BundlePath`; defaults latest bundle in `dist`. | Pass/fail. | No. | No. | No. |
 
 ## Node Tools
 
@@ -58,7 +58,7 @@ This map is based on the current `scripts/*.ps1` and `tools/*.js` files. Prefer 
 | `tools/generate_probe_candidates.js` | Generates objectdump-backed probe candidates. | `objectdump/objectdump_index.json`. | `docs/PROBE_CANDIDATES.md`. |
 | `tools/generate_progressive_hook_catalog.js` | Deterministically derives the 111-candidate hook catalog, empty trusted/quarantine state, validation ledger, safe defaults, and Lua catalog from the complete coverage catalog. Use `--validate` for release checks. | `campaign/crabsync_coverage_catalog.json` plus generator policy. | Progressive campaign JSON artifacts and `client/.../research_hook_catalog.lua`. |
 | `tools/summarize_probe_results.js` | Summarizes selected result JSONL and optional UE4SS log. | `--results <file>` repeated, optional `--ue4ss-log`. | `PROBE_RESULTS.md`, `SAFE_ACCESS_MATRIX.md`, `CRASH_PHASE_SUMMARY.md`. |
-| `tools/package_release.js` | Node packager for the v1.0.4 UE4SS bundle from a clean support template; it validates the staged bundle before zipping. | `--template`, optional `--out`, `--keep-staging`. | `dist/CrabRuntimeProbe-v1.0.4-UE4SS.zip`, temporary staging, sanitized external manifest. |
+| `tools/package_release.js` | Node packager for the v1.1.0 UE4SS bundle from a clean support template; it validates the staged bundle before zipping. | `--template`, optional `--out`, `--keep-staging`. | `dist/CrabRuntimeProbe-v1.1.0-UE4SS.zip`, temporary staging, sanitized external manifest. |
 | `tools/campaign_helpers.js` | Shared campaign/evidence classifiers. | Required by other tools. | Module exports. |
 | `tools/identity_helpers.js` | Identity parsing helpers. | Required by other tools/tests. | Module exports. |
 
@@ -66,7 +66,16 @@ This map is based on the current `scripts/*.ps1` and `tools/*.js` files. Prefer 
 
 Run `quick-smoke-prepare`, launch menu, quit, then `quick-smoke-collect`. Next prove `executeDelay` with `quick-tickdriver-prepare -TickDriver executeDelay` and `quick-tickdriver-collect`. Then use README or campaign order for observe, equipment, health, identity, resource, and inventory shape phases.
 
-## v1.0.4 Research and Release Workflow
+## v1.1.0 Readiness and Release Workflow
+
+Use the dashboard’s CrabSync Readiness Campaign only for the paired,
+local-only host/join field test. It derives an opaque pair ID from a short
+locally entered code, captures bounded local scalar/lifecycle evidence, and
+keeps remote visibility, inventory, transport, and apply gates unresolved.
+The packaging and verification commands now target v1.1.0 and require the
+readiness modules plus their three closed schemas.
+
+## v1.0.4 Progressive Research Baseline
 
 Use the dashboard, not a script or free-form hook path, to prepare exactly one
 future Progressive Broad Observation launch. The package defaults remain
@@ -81,7 +90,7 @@ node tools\generate_crabsync_coverage_catalog.js --validate
 node tools\generate_progressive_hook_catalog.js --validate
 ```
 
-Then build/extract/verify the canonical v1.0.4 archive or the UE4SS archive with
+Then build/extract/verify the canonical v1.1.0 archive or the UE4SS archive with
 the matching scripts above. Both verifiers reject pretrusted or prearmed state.
 
 ## Evidence Import Workflow

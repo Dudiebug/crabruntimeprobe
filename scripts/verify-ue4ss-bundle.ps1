@@ -78,9 +78,11 @@ foreach ($file in @(
   "Mods\CrabRuntimeProbe\Scripts\campaign_state.lua",
   "Mods\CrabRuntimeProbe\Scripts\status_writer.lua",
   "Mods\CrabRuntimeProbe\Scripts\snapshot_sampler.lua",
+  "Mods\CrabRuntimeProbe\Scripts\peer_sampler.lua",
   "Mods\CrabRuntimeProbe\Scripts\passive_hook_manager.lua",
   "Mods\CrabRuntimeProbe\Scripts\inventory_stage_manager.lua",
   "Mods\CrabRuntimeProbe\Scripts\full_observe_coordinator.lua",
+  "Mods\CrabRuntimeProbe\Scripts\readiness_observe_coordinator.lua",
   "Mods\CrabRuntimeProbe\Scripts\crabsync_catalog.lua",
   "Mods\CrabRuntimeProbe\Scripts\dashboard_autostart.lua",
   "Mods\CrabRuntimeProbe\Scripts\research_hook_catalog.lua",
@@ -107,6 +109,9 @@ foreach ($file in @(
   "schemas\evidence-bundle-v1.schema.json",
   "schemas\coverage-catalog-v1.schema.json",
   "schemas\snapshot-observation-v1.schema.json",
+  "schemas\readiness-campaign-manifest-v1.schema.json",
+  "schemas\peer-snapshot-v1.schema.json",
+  "schemas\terminal-lifecycle-v1.schema.json",
   "schemas\compatibility-fingerprint-v1.schema.json",
   "schemas\hook-breadcrumb-v1.schema.json",
   "schemas\hook-candidate-catalog-v1.schema.json",
@@ -119,6 +124,7 @@ foreach ($file in @(
   "docs\CRABSYNC_FULL_CAMPAIGN_GUIDE.md",
   "docs\CRABSYNC_COVERAGE_CATALOG.md",
   "docs\INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md",
+  "docs\CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md",
   "docs\CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md",
   "CHANGELOG.md",
   "THIRD_PARTY_NOTICES.md",
@@ -176,8 +182,19 @@ if (Test-Path -LiteralPath $payloadScriptsRoot -PathType Container) {
   } catch {
     Add-Error $_.Exception.Message
   }
+  try {
+    Assert-CrabRuntimeProbeReadinessSamplerSafety `
+      -ScriptsRoot $payloadScriptsRoot `
+      -Label 'UE4SS bundle readiness sampler'
+  } catch {
+    Add-Error $_.Exception.Message
+  }
   $safeProgressiveDefaults = [ordered]@{
     progressiveObservationEnabled = 'false'
+    campaignProfile = 'normal-play-guide'
+    readinessCampaignEnabled = 'false'
+    readinessPeerSnapshotsEnabled = 'false'
+    readinessInventoryStage = 'disabled'
     canaryCandidateId = 'unassigned'
     canaryHookPathFingerprint = 'unassigned'
     canaryValidationDepth = '0'
@@ -225,8 +242,12 @@ if (Test-Path -LiteralPath $evidenceBundleSchemaPath -PathType Leaf) {
     $researchRule = @($evidenceBundleSchema.allOf | Where-Object {
       [string]$_.'if'.properties.profileId.const -eq 'progressive-broad-observation'
     }) | Select-Object -First 1
+    $readinessRule = @($evidenceBundleSchema.allOf | Where-Object {
+      [string]$_.'if'.properties.profileId.const -eq 'crabsync-readiness-campaign'
+    }) | Select-Object -First 1
     $normalSafety = $normalRule.then.properties.safety.properties
     $researchSafety = $researchRule.then.properties.safety.properties
+    $readinessSafety = $readinessRule.then.properties.safety.properties
     if ($null -eq $normalRule -or $normalSafety.hooksDisabled.const -ne $true -or
         $normalSafety.controlledResearchHooks.const -ne $false -or
         $normalSafety.compatibilityValidated.const -ne $false -or
@@ -242,6 +263,20 @@ if (Test-Path -LiteralPath $evidenceBundleSchemaPath -PathType Leaf) {
         $researchSafety.compatibilityValidated.const -ne $true -or
         $researchSafety.trustedDepthEnforced.const -ne $true) {
       Add-Error 'UE4SS evidence-bundle progressive profile has an unsafe controlled-research contract.'
+    }
+    if ($null -eq $readinessRule -or $readinessSafety.writesDisabled.const -ne $true -or
+        $readinessSafety.rpcCallsDisabled.const -ne $true -or
+        $readinessSafety.mutationDisabled.const -ne $true -or
+        $readinessSafety.rawIdentityDisabled.const -ne $true -or
+        $readinessSafety.hudHookDisabled.const -ne $true -or
+        $readinessSafety.hooksDisabled.const -ne $true -or
+        $readinessSafety.runtimeDiscoveryDisabled.const -ne $true -or
+        $readinessSafety.inventoryStagesDisabled.const -ne $true -or
+        $readinessSafety.controlledResearchHooks.const -ne $false -or
+        $readinessSafety.compatibilityValidated.const -ne $false -or
+        $readinessSafety.trustedDepthEnforced.const -ne $false -or
+        [int]$readinessSafety.activeCanaries.const -ne 0) {
+      Add-Error 'UE4SS evidence-bundle readiness profile must be hook-free, discovery-free, inventory-disabled, and read-only.'
     }
   } catch {
     Add-Error "Invalid UE4SS mode-aware evidence-bundle safety schema: $($_.Exception.Message)"
@@ -313,11 +348,61 @@ foreach ($entry in $schemaIdentities.GetEnumerator()) {
   }
 }
 
+$readinessSchemaIdentities = @(
+  [pscustomobject]@{
+    FileName = 'readiness-campaign-manifest-v1.schema.json'
+    Identity = 'readiness-campaign-manifest-v1'
+    ManifestProperty = 'readinessCampaignManifest'
+    SchemaVersion = 'readiness-campaign-manifest-v1'
+  },
+  [pscustomobject]@{
+    FileName = 'peer-snapshot-v1.schema.json'
+    Identity = 'peer-snapshot-v1'
+    ManifestProperty = 'peerSnapshot'
+    SchemaVersion = '1'
+  },
+  [pscustomobject]@{
+    FileName = 'terminal-lifecycle-v1.schema.json'
+    Identity = 'terminal-lifecycle-v1'
+    ManifestProperty = 'terminalLifecycle'
+    SchemaVersion = '1'
+  }
+)
+foreach ($entry in $readinessSchemaIdentities) {
+  try {
+    $schema = Get-Content -Raw -LiteralPath (Join-Path $BundleRoot "schemas\$($entry.FileName)") | ConvertFrom-Json -ErrorAction Stop
+    if ([string]$schema.'$schema' -ne 'https://json-schema.org/draft/2020-12/schema' -or
+        [string]$schema.'$id' -notmatch [regex]::Escape("$($entry.Identity).schema.json") -or
+        [string]$schema.properties.schemaVersion.const -ne [string]$entry.SchemaVersion -or
+        $schema.additionalProperties -ne $false) {
+      Add-Error "UE4SS schema is not the expected closed readiness contract: $($entry.FileName)"
+    }
+  } catch {
+    Add-Error "Invalid UE4SS readiness schema $($entry.FileName): $($_.Exception.Message)"
+  }
+}
+
+try {
+  $readinessManifestSchema = Get-Content -Raw -LiteralPath (Join-Path $BundleRoot 'schemas\readiness-campaign-manifest-v1.schema.json') | ConvertFrom-Json -ErrorAction Stop
+  $readinessPeerSchema = Get-Content -Raw -LiteralPath (Join-Path $BundleRoot 'schemas\peer-snapshot-v1.schema.json') | ConvertFrom-Json -ErrorAction Stop
+  $readinessTerminalSchema = Get-Content -Raw -LiteralPath (Join-Path $BundleRoot 'schemas\terminal-lifecycle-v1.schema.json') | ConvertFrom-Json -ErrorAction Stop
+  if ([string]$readinessManifestSchema.'$defs'.pairId.pattern -ne '^readiness-pair-[a-f0-9]{24}$' -or
+      [string]$readinessPeerSchema.'$defs'.pairId.pattern -ne '^readiness-pair-[a-f0-9]{24}$' -or
+      [string]$readinessTerminalSchema.'$defs'.pairId.pattern -ne '^readiness-pair-[a-f0-9]{24}$' -or
+      [string]$readinessPeerSchema.properties.readinessPairId.'$ref' -ne '#/$defs/pairId' -or
+      [string]$readinessTerminalSchema.properties.readinessPairId.'$ref' -ne '#/$defs/pairId' -or
+      [string]$readinessPeerSchema.'$defs'.equipmentField.properties.value.'$ref' -ne '#/$defs/fingerprint') {
+    Add-Error 'UE4SS readiness schemas must bind only derived pair IDs and bounded fingerprint/scalar values.'
+  }
+} catch {
+  Add-Error "Invalid UE4SS strict readiness schema contract: $($_.Exception.Message)"
+}
+
 try {
   $versionManifestPath = Join-Path $BundleRoot 'version-manifest.json'
   $versionManifest = Get-Content -Raw -LiteralPath $versionManifestPath | ConvertFrom-Json -ErrorAction Stop
   if ($versionManifest.schemaVersion -ne 1 -or [string]$versionManifest.product -ne 'CrabRuntimeProbe' -or
-      [string]$versionManifest.version -notmatch '^1\.0\.4(?:[-+][0-9A-Za-z.-]+)?$' -or
+      [string]$versionManifest.version -notmatch '^1\.1\.0(?:[-+][0-9A-Za-z.-]+)?$' -or
       [string]$versionManifest.runtime -ne 'win-x64' -or
       [string]$versionManifest.bundleFormat -ne 'ue4ss-overlay' -or
       [string]::IsNullOrWhiteSpace([string]$versionManifest.commit) -or
@@ -326,7 +411,7 @@ try {
       $versionManifest.releaseSafety.canaryPrearmed -ne $false -or
       $versionManifest.releaseSafety.maximumCanariesPerProcess -ne 1 -or
       $versionManifest.releaseSafety.automaticInProcessAdvance -ne $false) {
-    Add-Error 'UE4SS version manifest does not identify a fail-closed v1.0.4 overlay.'
+    Add-Error 'UE4SS version manifest does not identify a fail-closed v1.1.0 overlay.'
   }
   $baseSchemaIdentities = [ordered]@{
     liveStatus = 'live-status-v1'
@@ -354,6 +439,11 @@ try {
     }
     if ([string]$versionManifest.schemaIdentities.$identityProperty -ne $entry.Value) {
       Add-Error "UE4SS version manifest schema identity missing or wrong: $identityProperty=$($entry.Value)"
+    }
+  }
+  foreach ($entry in $readinessSchemaIdentities) {
+    if ([string]$versionManifest.schemaIdentities.($entry.ManifestProperty) -ne [string]$entry.Identity) {
+      Add-Error "UE4SS version manifest schema identity missing or wrong: $($entry.ManifestProperty)=$($entry.Identity)"
     }
   }
   if ($null -ne $candidateCatalog) {
@@ -432,7 +522,7 @@ if (Test-Path -LiteralPath $buildInfoPath -PathType Leaf) {
       $buildInfo -notmatch "(?m)^product_version\s*=\s*$([regex]::Escape([string]$versionManifest.version))\s*$" -or
       $buildInfo -notmatch "(?m)^git_commit\s*=\s*$([regex]::Escape([string]$versionManifest.commit))\s*$" -or
       $buildInfo -match '(?im)^source_repo_path\s*=|[A-Z]:\\Users\\') {
-    Add-Error 'UE4SS build_info.txt is missing sanitized v1.0.4 release metadata or leaks a local path.'
+    Add-Error 'UE4SS build_info.txt is missing sanitized v1.1.0 release metadata or leaks a local path.'
   }
 }
 

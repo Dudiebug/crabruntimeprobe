@@ -217,8 +217,80 @@ public sealed class CampaignService
             "prepared",
             now,
             now,
-            string.Empty);
+            string.Empty,
+            "normal-play-guide");
 
+        await WriteCampaignRequestAsync(statusDirectory, state, false, cancellationToken).ConfigureAwait(false);
+        await _stateStore.SaveCampaignAsync(state, cancellationToken).ConfigureAwait(false);
+        return state;
+    }
+
+    /// <summary>
+    /// Prepares an explicit paired readiness campaign. The human-entered correlation code remains
+    /// in dashboard-local state only; the game receives only a derived opaque pair ID.
+    /// </summary>
+    public async Task<LocalCampaignState> PrepareReadinessCampaignAsync(
+        GameInstallation installation,
+        CampaignRole role,
+        string campaignName = ReadinessCampaignContracts.DefaultCampaignName,
+        string? correlationCode = null,
+        IEnumerable<string>? enabledChannels = null,
+        string? resourceStartPath = null,
+        string? dashboardExecutablePath = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (role == CampaignRole.Unknown) throw new ArgumentException("Select Host or Joined Client.", nameof(role));
+        var localCode = string.IsNullOrWhiteSpace(correlationCode)
+            ? role == CampaignRole.Host
+                ? ReadinessCampaignContracts.GenerateCorrelationCode()
+                : throw new ArgumentException("Enter the host's eight-character readiness correlation code before preparing a joined client.", nameof(correlationCode))
+            : ReadinessCampaignContracts.NormalizeCorrelationCode(correlationCode);
+        var channels = ReadinessCampaignContracts.NormalizeChannels(enabledChannels);
+        var resources = _resourceLocator.Locate(resourceStartPath);
+        await InstallPayloadAsync(resources, installation, cancellationToken).ConfigureAwait(false);
+
+        var now = DateTimeOffset.UtcNow;
+        var gameBinary = SteamGameLocator.ResolveGameBinaryDirectory(installation);
+        var scripts = Path.Combine(gameBinary, "Mods", "CrabRuntimeProbe", "Scripts");
+        if (!Directory.Exists(scripts))
+            throw new DirectoryNotFoundException($"Installed RuntimeProbe scripts were not found: {scripts}");
+        if (!string.IsNullOrWhiteSpace(dashboardExecutablePath))
+            await ConfigureDashboardAutoStartAsync(scripts, dashboardExecutablePath, cancellationToken)
+                .ConfigureAwait(false);
+        var statusDirectory = Path.Combine(scripts, "results");
+        Directory.CreateDirectory(statusDirectory);
+        campaignName = SanitizeCampaignName(campaignName);
+        var machineId = await _stateStore.GetOrCreateMachineIdAsync(cancellationToken).ConfigureAwait(false);
+        var generation = now.ToUnixTimeSeconds();
+        var sessionId = $"{now:yyyyMMddTHHmmssZ}-{Guid.NewGuid().ToString("N")[..8]}";
+        var pairing = new ReadinessCampaignLocalPairing(
+            localCode,
+            ReadinessCampaignContracts.DerivePairId(localCode),
+            $"readiness-manifest-{Guid.NewGuid().ToString("N")[..16]}",
+            ReadinessCampaignContracts.DeferredInventoryStage,
+            channels,
+            now);
+        ArchivePriorTransientStatus(statusDirectory, now);
+        var state = new LocalCampaignState(
+            2,
+            ReadinessCampaignContracts.CampaignId,
+            campaignName,
+            generation,
+            sessionId,
+            machineId,
+            role,
+            installation.InstallDirectory,
+            installation.ExecutablePath,
+            statusDirectory,
+            "prepared",
+            now,
+            now,
+            string.Empty,
+            ReadinessCampaignContracts.ProfileId,
+            pairing);
+        await ConfigureReadinessCampaignAsync(
+            Path.Combine(scripts, "config.txt"), state, cancellationToken).ConfigureAwait(false);
+        await WriteReadinessManifestAsync(statusDirectory, state, cancellationToken).ConfigureAwait(false);
         await WriteCampaignRequestAsync(statusDirectory, state, false, cancellationToken).ConfigureAwait(false);
         await _stateStore.SaveCampaignAsync(state, cancellationToken).ConfigureAwait(false);
         return state;
@@ -238,6 +310,11 @@ public sealed class CampaignService
             throw new InvalidDataException("Research manifest does not match the prepared campaign generation.");
         if (!manifest.Compatibility.IsComplete)
             throw new InvalidDataException("Research compatibility inputs are incomplete.");
+        if (ReadinessCampaignContracts.IsReadinessProfile(state.ProfileId))
+        {
+            throw new InvalidOperationException(
+                "The paired readiness profile is permanently hook-free. Prepare a separate progressive research campaign before arming a canary.");
+        }
         if (manifest.AutomaticInProcessAdvance || manifest.Canary is not null && manifest.RegistrationOrder[^1] != manifest.Canary.CandidateId)
             throw new InvalidDataException("Research manifest violates the process-boundary or canary-last invariant.");
         var installation = new GameInstallation(state.GameDirectory, state.ExecutablePath, "prepared-campaign");
@@ -291,14 +368,7 @@ public sealed class CampaignService
     {
         var scripts = Path.GetDirectoryName(state.StatusDirectory)
                       ?? throw new DirectoryNotFoundException("Prepared RuntimeProbe scripts directory is invalid.");
-        return ConfigureFullObserveAsync(
-            Path.Combine(scripts, "config.txt"),
-            state.Role,
-            state.CampaignName,
-            state.Generation,
-            state.SessionId,
-            state.MachineId,
-            cancellationToken);
+        return ConfigureCampaignAsync(Path.Combine(scripts, "config.txt"), state, cancellationToken);
     }
 
     public async Task<LocalCampaignState?> ResumeAsync(
@@ -322,15 +392,11 @@ public sealed class CampaignService
         if (!string.IsNullOrWhiteSpace(effectiveDashboardPath))
             await ConfigureDashboardAutoStartAsync(scripts, effectiveDashboardPath, cancellationToken)
                 .ConfigureAwait(false);
-        await ConfigureFullObserveAsync(
-            Path.Combine(scripts, "config.txt"),
-            state.Role,
-            state.CampaignName,
-            state.Generation,
-            state.SessionId,
-            state.MachineId,
-            cancellationToken).ConfigureAwait(false);
+        await ConfigureCampaignAsync(Path.Combine(scripts, "config.txt"), state, cancellationToken)
+            .ConfigureAwait(false);
         Directory.CreateDirectory(state.StatusDirectory);
+        if (ReadinessCampaignContracts.IsReadinessProfile(state.ProfileId))
+            await WriteReadinessManifestAsync(state.StatusDirectory, state, cancellationToken).ConfigureAwait(false);
         var resumed = state with { Phase = "monitoring", UpdatedAtUtc = DateTimeOffset.UtcNow };
         await WriteCampaignRequestAsync(state.StatusDirectory, resumed, true, cancellationToken).ConfigureAwait(false);
         await _stateStore.SaveCampaignAsync(resumed, cancellationToken).ConfigureAwait(false);
@@ -356,6 +422,8 @@ public sealed class CampaignService
             state.CampaignId,
             state.Generation,
             state.SessionId,
+            profileId = state.ProfileId,
+            readinessPairId = state.ReadinessPairing?.PairId ?? string.Empty,
             requestedAtUtc = DateTimeOffset.UtcNow,
             diagnosticsOnly = true,
             noWrites = true,
@@ -403,6 +471,18 @@ public sealed class CampaignService
             state.MachineId,
             state.SessionId,
             selectedRole = state.Role.ToContract(),
+            profileId = state.ProfileId,
+            readiness = state.ReadinessPairing is { } pairing
+                ? new
+                {
+                    pairId = pairing.PairId,
+                    manifestId = pairing.ManifestId,
+                    inventoryStage = pairing.InventoryStage,
+                    enabledChannels = pairing.EnabledChannels,
+                    peerSnapshotsEnabled = true,
+                    maxPeers = ReadinessCampaignContracts.MaxPeers
+                }
+                : null,
             resume,
             preparedAtUtc = state.PreparedAtUtc,
             requestedAtUtc = DateTimeOffset.UtcNow,
@@ -510,6 +590,122 @@ public sealed class CampaignService
         return separator <= 0 ? null : trimmed[..separator].Trim();
     }
 
+    private static Task ConfigureCampaignAsync(
+        string configPath,
+        LocalCampaignState state,
+        CancellationToken cancellationToken)
+    {
+        if (ReadinessCampaignContracts.IsReadinessProfile(state.ProfileId))
+            return ConfigureReadinessCampaignAsync(configPath, state, cancellationToken);
+        return ConfigureFullObserveAsync(
+            configPath,
+            state.Role,
+            state.CampaignName,
+            state.Generation,
+            state.SessionId,
+            state.MachineId,
+            cancellationToken);
+    }
+
+    private static async Task ConfigureReadinessCampaignAsync(
+        string configPath,
+        LocalCampaignState state,
+        CancellationToken cancellationToken)
+    {
+        var pairing = state.ReadinessPairing;
+        if (pairing is not { HasValidPair: true })
+            throw new InvalidDataException("Readiness campaign configuration is missing valid local pairing metadata.");
+        if (!ReadinessCampaignContracts.IsReadinessProfile(state.ProfileId)
+            || !state.CampaignId.Equals(ReadinessCampaignContracts.CampaignId, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("Readiness profile and campaign identity must match the reviewed readiness contract.");
+        }
+
+        // Start from the known hook-free profile, then add only the bounded readiness contract.
+        // This intentionally leaves every legacy deep-inventory gate false.
+        await ConfigureFullObserveAsync(
+            configPath,
+            state.Role,
+            state.CampaignName,
+            state.Generation,
+            state.SessionId,
+            state.MachineId,
+            cancellationToken).ConfigureAwait(false);
+        var required = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["campaignId"] = ReadinessCampaignContracts.CampaignId,
+            ["campaignProfile"] = ReadinessCampaignContracts.ProfileId,
+            ["probeSet"] = ReadinessCampaignContracts.ProfileId,
+            ["readinessCampaignEnabled"] = "true",
+            ["writeJsonlResults"] = "true",
+            ["readinessPairId"] = pairing.PairId,
+            ["readinessManifestId"] = pairing.ManifestId,
+            ["readinessInventoryStage"] = ReadinessCampaignContracts.DeferredInventoryStage,
+            ["readinessEnabledChannels"] = string.Join(",", pairing.EnabledChannels),
+            ["readinessPeerSnapshotsEnabled"] = "true",
+            ["readinessTerminalSnapshotEnabled"] = "true",
+            ["readinessMaxPeers"] = ReadinessCampaignContracts.MaxPeers.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["readinessHealthIntervalSeconds"] = ReadinessCampaignContracts.HealthIntervalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["readinessScalarIntervalSeconds"] = ReadinessCampaignContracts.ScalarIntervalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["readinessUnchangedHeartbeatSeconds"] = ReadinessCampaignContracts.UnchangedHeartbeatSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["snapshotSampleIntervalSeconds"] = ReadinessCampaignContracts.ScalarIntervalSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["snapshotUnchangedHeartbeatSeconds"] = ReadinessCampaignContracts.UnchangedHeartbeatSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["allowPassiveObservationHooks"] = "false",
+            ["allowFullObserveInventoryStages"] = "false",
+            ["allowFullObserveRuntimeDiscovery"] = "false",
+            ["allowDeepArrayProbes"] = "false",
+            ["allowInventoryInfoProbes"] = "false",
+            ["allowInventoryArrayShallowProbes"] = "false",
+            ["allowInventoryArrayShapeConfirmProbes"] = "false",
+            ["allowInventoryUserdataIntrospectionProbes"] = "false",
+            ["allowInventoryArrayCountProbes"] = "false",
+            ["allowInventoryElementDataAssetReadProbes"] = "false",
+            ["allowWriteProbes"] = "false",
+            ["allowRpcProbes"] = "false",
+            ["allowHudTickHook"] = "false",
+            ["allowRawIdentityEvidence"] = "false"
+        };
+        await UpdateConfigAsync(configPath, required, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static Task WriteReadinessManifestAsync(
+        string statusDirectory,
+        LocalCampaignState state,
+        CancellationToken cancellationToken)
+    {
+        var pairing = state.ReadinessPairing;
+        if (pairing is not { HasValidPair: true }
+            || !ReadinessCampaignContracts.IsReadinessProfile(state.ProfileId)
+            || !state.CampaignId.Equals(ReadinessCampaignContracts.CampaignId, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("Refusing to publish a readiness manifest without a valid paired readiness state.");
+        }
+
+        var manifest = new ReadinessCampaignManifest(
+            ReadinessCampaignContracts.ManifestSchema,
+            pairing.ManifestId,
+            state.CampaignId,
+            state.Generation,
+            state.SessionId,
+            state.MachineId,
+            state.Role.ToContract(),
+            state.ProfileId,
+            pairing.PairId,
+            state.PreparedAtUtc,
+            pairing.InventoryStage,
+            pairing.EnabledChannels,
+            true,
+            ReadinessCampaignContracts.MaxPeers,
+            new ReadinessIntervals(
+                ReadinessCampaignContracts.HealthIntervalSeconds,
+                ReadinessCampaignContracts.ScalarIntervalSeconds,
+                ReadinessCampaignContracts.DisabledInventoryIntervalSeconds,
+                ReadinessCampaignContracts.UnchangedHeartbeatSeconds),
+            new ReadinessManifestSafety(true, false, false, false, false, false, false, false));
+        return AtomicFile.WriteJsonAsync(
+            Path.Combine(statusDirectory, "readiness_campaign_manifest.json"), manifest, cancellationToken);
+    }
+
     private static async Task ConfigureFullObserveAsync(
         string configPath,
         CampaignRole role,
@@ -526,6 +722,7 @@ public sealed class CampaignService
             ["enabled"] = "true",
             ["campaignName"] = campaignName,
             ["campaignId"] = "crabsync-full-observe",
+            ["campaignProfile"] = "normal-play-guide",
             ["campaignGeneration"] = campaignGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["campaignSessionId"] = campaignSessionId,
             ["machineId"] = machineId,
@@ -588,6 +785,17 @@ public sealed class CampaignService
             , ["canaryValidationDepth"] = "0"
             , ["canaryState"] = "untested"
             , ["relicCountValidationEnabled"] = "false"
+            , ["readinessCampaignEnabled"] = "false"
+            , ["readinessPairId"] = "unassigned"
+            , ["readinessManifestId"] = "unassigned"
+            , ["readinessInventoryStage"] = "disabled"
+            , ["readinessEnabledChannels"] = ""
+            , ["readinessPeerSnapshotsEnabled"] = "false"
+            , ["readinessTerminalSnapshotEnabled"] = "true"
+            , ["readinessMaxPeers"] = "4"
+            , ["readinessHealthIntervalSeconds"] = "1"
+            , ["readinessScalarIntervalSeconds"] = "1"
+            , ["readinessUnchangedHeartbeatSeconds"] = "30"
         };
 
         var lines = (await File.ReadAllLinesAsync(configPath, cancellationToken).ConfigureAwait(false)).ToList();
@@ -688,7 +896,8 @@ public sealed class CampaignService
             .Concat(new[]
             {
                 Path.Combine(statusDirectory, "dashboard_campaign_request.json"),
-                Path.Combine(statusDirectory, "dashboard_stop_requested.json")
+                Path.Combine(statusDirectory, "dashboard_stop_requested.json"),
+                Path.Combine(statusDirectory, "readiness_campaign_manifest.json")
             }.Where(File.Exists))
             .ToArray();
         if (candidates.Length == 0) return;

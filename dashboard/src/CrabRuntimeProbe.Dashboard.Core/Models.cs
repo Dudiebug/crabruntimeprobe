@@ -115,7 +115,11 @@ public sealed record SafetyInfo(
     bool RuntimeDiscoveryDisabled,
     bool InventoryStagesDisabled,
     int InventoryDepth,
-    IReadOnlyDictionary<string, string> CircuitBreakers)
+    IReadOnlyDictionary<string, string> CircuitBreakers,
+    bool ControlledResearchHooks = false,
+    bool CompatibilityValidated = false,
+    bool TrustedDepthEnforced = false,
+    int ActiveCanaries = 0)
 {
     public bool AllRequiredSafe =>
         WritesDisabled && RpcsDisabled && MutationDisabled && HudHookDisabled && RawIdentityDisabled
@@ -125,10 +129,17 @@ public sealed record SafetyInfo(
         WritesDisabled && RpcsDisabled && MutationDisabled && HudHookDisabled && RawIdentityDisabled
         && RuntimeDiscoveryDisabled && InventoryStagesDisabled;
 
-    public bool IsSafeForProfile(string? profileId) =>
-        string.Equals(profileId, "progressive-broad-observation", StringComparison.OrdinalIgnoreCase)
-            ? AllNonHookOperationsDisabled
-            : AllRequiredSafe;
+    public bool IsSafeForProfile(string? profileId)
+    {
+        var controlledCanarySafe = ControlledResearchHooks && CompatibilityValidated && TrustedDepthEnforced
+                                   && ActiveCanaries is >= 0 and <= 1;
+        if (string.Equals(profileId, "progressive-broad-observation", StringComparison.OrdinalIgnoreCase))
+            return AllNonHookOperationsDisabled && controlledCanarySafe;
+        if (ReadinessCampaignContracts.IsReadinessProfile(profileId))
+            return AllRequiredSafe && !ControlledResearchHooks && !CompatibilityValidated
+                   && !TrustedDepthEnforced && ActiveCanaries == 0;
+        return AllRequiredSafe;
+    }
 }
 
 public sealed record ChecklistEvidence(
@@ -174,7 +185,8 @@ public sealed record LiveStatusSnapshot(
     EvidenceHealthInfo EvidenceHealth,
     bool CrashSuspected,
     bool DirtyEvidence,
-    string SourceFile)
+    string SourceFile,
+    ReadinessCampaignStatus? Readiness = null)
 {
     public static LiveStatusSnapshot Empty { get; } = new(
         1,
@@ -265,7 +277,8 @@ public sealed record LiveDashboardStatus(
     bool HasFreshWriter,
     bool SafetyProven,
     bool HasClockSkew,
-    ObservationCapabilityProfile Capabilities)
+    ObservationCapabilityProfile Capabilities,
+    ReadinessCampaignStatus? Readiness = null)
 {
     public static LiveDashboardStatus Empty { get; } = new(
         LiveCollectionState.GameUnavailable,
@@ -461,7 +474,9 @@ public sealed record LocalCampaignState(
     string Phase,
     DateTimeOffset PreparedAtUtc,
     DateTimeOffset UpdatedAtUtc,
-    string LastBundlePath);
+    string LastBundlePath,
+    string ProfileId = "normal-play-guide",
+    ReadinessCampaignLocalPairing? ReadinessPairing = null);
 
 public sealed record CollectionResult(
     string BundleDirectory,
@@ -511,6 +526,10 @@ public sealed record BundleSafety(
         if (string.Equals(profileId, "progressive-broad-observation", StringComparison.OrdinalIgnoreCase))
             return AllNonHookOperationsDisabled && ControlledResearchHooks && CompatibilityValidated
                    && TrustedDepthEnforced && ActiveCanaries is >= 0 and <= 1;
+
+        if (ReadinessCampaignContracts.IsReadinessProfile(profileId))
+            return AllDisabled && !ControlledResearchHooks && !CompatibilityValidated
+                   && !TrustedDepthEnforced && ActiveCanaries == 0;
 
         return string.Equals(profileId, "crabsync-full-observe", StringComparison.OrdinalIgnoreCase)
                && AllDisabled && !ControlledResearchHooks && !CompatibilityValidated

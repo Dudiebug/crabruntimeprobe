@@ -80,6 +80,15 @@ local function campaignIdentityValid(config)
     and generation ~= nil and generation >= 1 and math.floor(generation) == generation
 end
 
+local function lifecycleShape(state, lifecycleState, lifecycleGeneration, context, stable)
+  return {
+    state = tostring(lifecycleState or state.lifecycleState or 'unknown'),
+    generation = math.max(0, math.floor(tonumber(lifecycleGeneration) or state.lifecycleGeneration or 0)),
+    context = tostring(context or state.context or 'unknown'),
+    stable = stable == true
+  }
+end
+
 local function loadCatalog()
   local ok, value = pcall(function() return require('crabsync_catalog') end)
   if not ok or type(value) ~= 'table' then
@@ -117,7 +126,8 @@ function coordinator.new(sessionId, config, safe, evidenceWriter)
     stableReady = false,
     stabilityResetReason = 'startup',
     lastContext = 'unknown',
-    lastPlayerStatePresent = false
+    lastPlayerStatePresent = false,
+    lifecycleTransitionListener = nil
   }
 
   function o:resetStability(reason)
@@ -135,6 +145,21 @@ function coordinator.new(sessionId, config, safe, evidenceWriter)
       candidateFingerprint = '',
       resetReason = self.stabilityResetReason
     })
+  end
+
+  -- The hook-free baseline does not know what a profile-specific listener
+  -- does. Readiness supplies one from its separate module so Normal Play
+  -- Guide never imports paired-readiness code.
+  function o:setLifecycleTransitionListener(listener)
+    self.lifecycleTransitionListener = type(listener) == 'function' and listener or nil
+  end
+
+  function o:notifyLifecycleTransition(priorLifecycle, nextLifecycle, reason)
+    if type(self.lifecycleTransitionListener) ~= 'function' then return end
+    local ok, err = pcall(self.lifecycleTransitionListener, priorLifecycle, nextLifecycle, reason)
+    if not ok then
+      crpLog.line('[CrabRuntimeProbe] lifecycle transition listener failed: ' .. tostring(err))
+    end
   end
 
   function o:observeStableCandidate(candidateKey)
@@ -205,7 +230,11 @@ function coordinator.new(sessionId, config, safe, evidenceWriter)
 
     self.active = true
     self.state.lifecycleState = 'warming'
-    if self.config.progressiveObservationEnabled ~= true then
+    -- The readiness coordinator reuses this bounded baseline but owns its
+    -- profile.  Do not briefly relabel a paired readiness run as Normal Play
+    -- Guide while emitting its startup/status evidence.
+    if self.config.progressiveObservationEnabled ~= true
+      and self.config.readinessCampaignEnabled ~= true then
       self.state.activeProfile = 'normal-play-guide'
       self.state.workflow = 'normal-play-guide'
     end
@@ -260,6 +289,20 @@ function coordinator.new(sessionId, config, safe, evidenceWriter)
       and (not candidateValid or candidateKey ~= self.stableCandidateKey)
     local forceTransition = (self.lastPlayerStatePresent and not playerStatePresent)
       or contextChangedAfterStable
+    local wasStable = self.stableReady and self.state.lifecycleState == 'stable'
+    local nextLifecycleState = 'warming'
+    if not candidateValid and (nextContext == 'traveling'
+      or nextContext == 'dead-or-respawning' or nextContext == 'unstable') then
+      nextLifecycleState = nextContext
+    end
+    local priorLifecycle = lifecycleShape(self.state, self.state.lifecycleState,
+      self.state.lifecycleGeneration, self.state.context, wasStable)
+    local nextLifecycle = lifecycleShape(self.state, nextLifecycleState,
+      (tonumber(self.state.lifecycleGeneration) or 0) + (forceTransition and 1 or 0), nextContext, false)
+    if wasStable and forceTransition then
+      self:notifyLifecycleTransition(priorLifecycle, nextLifecycle,
+        'stable-scope-transition:' .. tostring(nextContext))
+    end
     local authorityStatus = self.safe.authorityStatus(playerState)
     local observedRole = observedRoleFromAuthority(authorityStatus)
     local selectedRole = tostring(self.state.selectedRole):lower():gsub('%s+', '-')
@@ -273,7 +316,7 @@ function coordinator.new(sessionId, config, safe, evidenceWriter)
       worldFingerprint = currentWorldFingerprint,
       localPlayerStateFingerprint = playerStateFingerprint,
       context = nextContext,
-      lifecycleState = candidateValid and 'warming' or (nextContext == 'solo' and 'warming' or nextContext),
+      lifecycleState = nextLifecycleState,
       observedRole = observedRole,
       authorityStatus = authorityStatus,
       forceLifecycleTransition = forceTransition

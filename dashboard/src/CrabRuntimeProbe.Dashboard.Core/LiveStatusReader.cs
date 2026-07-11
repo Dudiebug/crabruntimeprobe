@@ -218,10 +218,15 @@ public sealed class LiveStatusReader
             Bool(safetyElement, "runtimeDiscoveryDisabled", false),
             Bool(safetyElement, "inventoryStagesDisabled", false),
             Int(safetyElement, "inventoryDepth", 0),
-            breakers);
+            breakers,
+            Bool(safetyElement, "controlledResearchHooks", false),
+            Bool(safetyElement, "compatibilityValidated", false),
+            Bool(safetyElement, "trustedDepthEnforced", false),
+            Int(safetyElement, "activeCanaries", 0));
 
         var checklist = ParseChecklist(Object(root, "checklist"));
         var evidenceHealth = ParseEvidenceHealth(root);
+        var readiness = ParseReadiness(root, runtimeElement);
 
         return new LiveStatusSnapshot(
             schemaVersion,
@@ -243,8 +248,118 @@ public sealed class LiveStatusReader
             evidenceHealth,
             Bool(root, "crashSuspected", false),
             Bool(root, "dirtyEvidence", false),
-            sourceFile);
+            sourceFile,
+            readiness);
     }
+
+    private static ReadinessCampaignStatus? ParseReadiness(JsonElement root, JsonElement runtime)
+    {
+        var rootReadiness = Object(root, "readiness");
+        var runtimeReadiness = Object(runtime, "readiness");
+        var readiness = rootReadiness.ValueKind == JsonValueKind.Object ? rootReadiness
+            : runtimeReadiness.ValueKind == JsonValueKind.Object ? runtimeReadiness
+            : default;
+        var enabled = NullableBool(readiness, "enabled")
+                      ?? NullableBool(root, "readinessCampaignEnabled")
+                      ?? NullableBool(runtime, "readinessCampaignEnabled");
+        var pairId = FirstNonEmpty(
+            String(readiness, "pairId", string.Empty),
+            String(readiness, "readinessPairId", string.Empty),
+            String(root, "readinessPairId", string.Empty),
+            String(runtime, "readinessPairId", string.Empty));
+        var manifestId = FirstNonEmpty(
+            String(readiness, "manifestId", string.Empty),
+            String(readiness, "readinessManifestId", string.Empty),
+            String(root, "readinessManifestId", string.Empty),
+            String(runtime, "readinessManifestId", string.Empty));
+        var inventoryStage = FirstNonEmpty(
+            String(readiness, "inventoryStage", string.Empty),
+            String(root, "readinessInventoryStage", string.Empty),
+            String(runtime, "readinessInventoryStage", string.Empty));
+        var stageState = FirstNonEmpty(
+            String(readiness, "stageState", string.Empty),
+            String(root, "readinessStageState", string.Empty),
+            String(runtime, "readinessStageState", string.Empty),
+            "unavailable");
+        var hasPublishedReadiness = readiness.ValueKind == JsonValueKind.Object || enabled.HasValue
+                                    || !string.IsNullOrWhiteSpace(pairId) || !string.IsNullOrWhiteSpace(inventoryStage);
+        if (!hasPublishedReadiness) return null;
+
+        return new ReadinessCampaignStatus(
+            enabled ?? false,
+            pairId,
+            manifestId,
+            inventoryStage,
+            stageState,
+            ReadinessChannels(readiness, root, runtime),
+            NullableBool(readiness, "safeReadChannelsReady")
+                ?? NullableBool(root, "readinessSafeReadChannelsReady")
+                ?? NullableBool(runtime, "readinessSafeReadChannelsReady"),
+            FirstInt(readiness, root, runtime, "visiblePlayerCount", "readinessVisiblePlayerCount"),
+            FirstInt(readiness, root, runtime, "stablePlayerCount", "readinessStablePlayerCount"),
+            FirstLong(readiness, root, runtime, "peerSnapshotCount", "readinessPeerSnapshotCount"),
+            FirstInt(readiness, root, runtime, "inventoryCategoryCount", "readinessInventoryCategoryCount"),
+            FirstInt(readiness, root, runtime, "maxPeers", "readinessMaxPeers"),
+            FirstInt(readiness, root, runtime, "maxInventoryItems", "readinessMaxInventoryItems"),
+            FirstInt(readiness, root, runtime, "maxEnhancements", "readinessMaxEnhancements"),
+            FirstNonEmpty(
+                String(readiness, "detail", string.Empty),
+                String(root, "readinessDetail", string.Empty),
+                String(runtime, "readinessDetail", string.Empty)));
+    }
+
+    private static IReadOnlyList<string> ReadinessChannels(
+        JsonElement readiness,
+        JsonElement root,
+        JsonElement runtime)
+    {
+        foreach (var element in new[] { readiness, root, runtime })
+        {
+            var values = StringList(element, "enabledChannels", "readinessEnabledChannels");
+            if (values.Count == 0) continue;
+            return values.SelectMany(value => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                .Select(value => value.Trim().ToLowerInvariant())
+                .Where(value => value.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        return Array.Empty<string>();
+    }
+
+    private static int FirstInt(JsonElement first, JsonElement second, JsonElement third, string nestedName, string flatName)
+    {
+        const int missing = int.MinValue;
+        foreach (var candidate in new[]
+                 {
+                     Int(first, nestedName, missing), Int(first, flatName, missing),
+                     Int(second, flatName, missing), Int(third, flatName, missing)
+                 })
+        {
+            if (candidate != missing) return candidate;
+        }
+
+        return 0;
+    }
+
+    private static long FirstLong(JsonElement first, JsonElement second, JsonElement third, string nestedName, string flatName)
+    {
+        const long missing = long.MinValue;
+        foreach (var candidate in new[]
+                 {
+                     Long(first, nestedName, missing), Long(first, flatName, missing),
+                     Long(second, flatName, missing), Long(third, flatName, missing)
+                 })
+        {
+            if (candidate != missing) return candidate;
+        }
+
+        return 0;
+    }
+
+    private static string FirstNonEmpty(params string[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value))?.Trim() ?? string.Empty;
 
     private static IReadOnlyDictionary<string, ChecklistEvidence> ParseChecklist(JsonElement element)
     {

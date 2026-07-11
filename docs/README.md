@@ -2,6 +2,7 @@
 
 ## RuntimeProbe Operation Docs
 
+- [CrabRuntimeProbe v1.1.0 Readiness Campaign Release Notes](CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md)
 - [CrabRuntimeProbe v1.0.4 Release Notes](CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md)
 - [CrabRuntimeProbe v1.0.4 Campaign and Research Guide](CRABSYNC_FULL_CAMPAIGN_GUIDE.md)
 - [Repository Changelog](../CHANGELOG.md)

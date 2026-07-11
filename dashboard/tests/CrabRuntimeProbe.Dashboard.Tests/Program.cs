@@ -14,11 +14,14 @@ var tests = new (string Name, Func<Task> Body)[]
     ("progressive catalog, canary, breadcrumbs, attribution, compatibility, and promotion", ResearchContractsAsync),
     ("hook-free snapshot replay qualification and rejection", SnapshotReplayAsync),
     ("snapshot evidence file filtering and fail-closed merge", SnapshotEvidenceServiceAsync),
+    ("active-scope collection and terminal stale snapshot preservation", ScopedTerminalCollectionAsync),
     ("data-driven checklist prerequisites and qualifying evidence", ChecklistAsync),
     ("friend-facing Play Guide projection, mapping, states, and filters", PlayGuideAsync),
     ("real exhaustive coverage catalog aliases and terminal states", CoverageCatalogAsync),
     ("atomic file replacement", AtomicFileAsync),
     ("safe prepare, mods merge, status archive, and resume", PrepareAndResumeAsync),
+    ("paired readiness preparation is private and inventory-deferred", ReadinessPrepareAsync),
+    ("readiness evidence is closed, cleanly exported, and pair-bound", ReadinessEvidenceAndBundleAsync),
     ("game process handoff grace and confirmed exit", GameProcessExitDetectorAsync),
     ("identity redaction", RedactionAsync),
     ("byte-identical canonical collection and unsafe omission", CollectionAsync),
@@ -180,7 +183,14 @@ static async Task LiveDashboardReducerAsync()
     var progressiveSnapshot = collectingSnapshot with
     {
         Runtime = collectingSnapshot.Runtime with { ActiveProfile = "progressive-broad-observation" },
-        Safety = collectingSnapshot.Safety with { HooksDisabled = false }
+        Safety = collectingSnapshot.Safety with
+        {
+            HooksDisabled = false,
+            ControlledResearchHooks = true,
+            CompatibilityValidated = true,
+            TrustedDepthEnforced = true,
+            ActiveCanaries = 1
+        }
     };
     var progressive = reducer.Reduce(new LiveStatusReadResult(
         progressiveSnapshot, true, false, false, string.Empty,
@@ -365,6 +375,13 @@ static Task SnapshotReplayAsync()
     var scopeReplay = reducer.ReplayJsonl(scopeChanged, scope);
     Require(scopeReplay.Qualifications.Count == 0 && scopeReplay.Rejections.Count == 0,
         "a normal world-scope transition was treated as a gameplay delta or corrupt evidence");
+
+    var readinessScope = scope with { ObservationProfile = ObservationProfileIds.ReadinessCampaign };
+    var readinessInventory = reducer.ReplayJsonl(
+        SnapshotRow(1, "inventory", "wrapper", 1m, session, generation, machine,
+            observationProfile: ObservationProfileIds.ReadinessCampaign), readinessScope);
+    Require(readinessInventory.Rejections.Any(item => item.Code == "readiness-category-blocked"),
+        "readiness replay accepted a non-reviewed inventory snapshot category");
     return Task.CompletedTask;
 }
 
@@ -382,6 +399,10 @@ static async Task SnapshotEvidenceServiceAsync()
         accessPath,
         generic + "\n" + SnapshotDeltaJsonl(
             "crystals", "crystals", 10m, 20m, session, generation, machine) + "\n");
+    await File.AppendAllTextAsync(
+        accessPath,
+        SnapshotRow(99, "crystals", "crystals", 99m, session, generation, machine,
+            hooksDisabled: false, observationProfile: "progressive-broad-observation") + "\n");
     await File.WriteAllTextAsync(
         Path.Combine(statusDirectory, "snapshot_observations_old-session.jsonl"),
         "{ malformed old session");
@@ -404,7 +425,7 @@ static async Task SnapshotEvidenceServiceAsync()
     var loaded = await service.LoadAsync(campaign);
     Require(loaded.Replay.InputRows == 6 && loaded.Replay.Rejections.Count == 0
             && loaded.SourceFiles.All(path => !path.Contains("old-session", StringComparison.OrdinalIgnoreCase)),
-        "generic or foreign-session evidence was not ignored by the snapshot reader");
+        "generic, foreign-session, or foreign-profile evidence was not ignored by the snapshot reader");
 
     var statusSnapshot = new LiveStatusReader().Parse(
         StatusJson(20, DateTimeOffset.UtcNow, generation, session));
@@ -431,6 +452,101 @@ static async Task SnapshotEvidenceServiceAsync()
     Require(rejected.Replay.Rejections.Count > 0
             && !failClosed.Snapshot.Checklist.ContainsKey("resource-crystal-gain"),
         "malformed snapshot tail was allowed to overlay checklist evidence");
+}
+
+static async Task ScopedTerminalCollectionAsync()
+{
+    using var temp = new TempDirectory();
+    var package = CreatePackage(temp.Path);
+    const long generation = 119;
+    const string session = "terminal-snapshot-session";
+    const string machine = "machine-test";
+    var game = Path.Combine(temp.Path, "terminal-game");
+    var scripts = Path.Combine(game, "Mods", "CrabRuntimeProbe", "Scripts");
+    var statusDirectory = Path.Combine(scripts, "results");
+    Directory.CreateDirectory(statusDirectory);
+    var executable = Path.Combine(game, "CrabChampions-Win64-Shipping.exe");
+    await File.WriteAllBytesAsync(executable, Array.Empty<byte>());
+    await File.WriteAllTextAsync(
+        Path.Combine(statusDirectory, "live_status.slot0.json"),
+        StatusJson(30, DateTimeOffset.UtcNow.AddMinutes(-2), generation, session)
+            .Replace("\"runtimeProbeState\":\"healthy\"",
+                "\"runtimeProbeState\":\"stopped\",\"stopRequested\":true",
+                StringComparison.Ordinal));
+    var activeCanonical = Path.Combine(statusDirectory, $"access_evidence_{session}.jsonl");
+    await File.WriteAllTextAsync(
+        activeCanonical,
+        SnapshotDeltaJsonl("crystals", "crystals", 10m, 20m, session, generation, machine) + "\n");
+
+    // These prior files are intentionally unsafe and one is not JSON. Their identity is
+    // outside the active run, so they must be recorded as neutral omissions rather than
+    // poisoning clean current snapshot evidence.
+    await File.WriteAllTextAsync(
+        Path.Combine(statusDirectory, "access_evidence_old-terminal-session.jsonl"),
+        "{\"sessionId\":\"old-terminal-session\",\"campaignGeneration\":1,\"hooksEnabled\":true,\"UniqueId\":\"76561198000000000\"}\n");
+    await File.WriteAllBytesAsync(
+        Path.Combine(statusDirectory, "access_evidence_old-terminal-session.zip"),
+        Encoding.UTF8.GetBytes("PK\u0003\u0004not-current-evidence"));
+    await File.WriteAllTextAsync(
+        Path.Combine(statusDirectory, "session_manifest_old-terminal-session.json"),
+        "{\"hooksEnabled\":true,\"UniqueId\":\"76561198000000000\"}\n");
+    var priorProfile = Path.Combine(statusDirectory, $"probe_results_{session}.jsonl");
+    await File.WriteAllTextAsync(
+        priorProfile,
+        $"{{\"sessionId\":\"{session}\",\"campaignGeneration\":{generation},\"observationProfile\":\"progressive-broad-observation\",\"hooksEnabled\":true}}\n");
+
+    var state = new LocalCampaignState(
+        1,
+        "crabsync-full-observe",
+        "Terminal scope test",
+        generation,
+        session,
+        machine,
+        CampaignRole.Host,
+        game,
+        executable,
+        statusDirectory,
+        "monitoring",
+        DateTimeOffset.UtcNow.AddMinutes(-3),
+        DateTimeOffset.UtcNow,
+        string.Empty);
+
+    var clean = await new EvidenceCollector().CollectAsync(
+        state,
+        Path.Combine(temp.Path, "terminal-exports"),
+        resourceStartPath: package);
+    var cleanOmissions = await File.ReadAllTextAsync(
+        Path.Combine(clean.BundleDirectory, "omissions", "omitted_or_rejected_sources.txt"));
+    var cleanDiagnostic = await File.ReadAllTextAsync(clean.SummaryPath);
+    Require(!clean.DirtyEvidence && !clean.CrashSuspected,
+        $"a clean post-game stale status discarded valid current snapshot evidence: {cleanDiagnostic} omissions={cleanOmissions}");
+    var cleanCanonicalDirectory = Path.Combine(clean.BundleDirectory, "evidence", "canonical");
+    Require(File.Exists(Path.Combine(cleanCanonicalDirectory, Path.GetFileName(activeCanonical)))
+            && !Directory.EnumerateFiles(cleanCanonicalDirectory, "*old-terminal-session*", SearchOption.TopDirectoryOnly).Any()
+            && !File.Exists(Path.Combine(cleanCanonicalDirectory, Path.GetFileName(priorProfile))),
+        "out-of-scope canonical artifacts were exported with the active session");
+    Require(cleanOmissions.Contains("old-terminal-session", StringComparison.OrdinalIgnoreCase)
+            && !cleanOmissions.Contains("unsafe write/RPC/hook", StringComparison.OrdinalIgnoreCase),
+        "prior unsafe artifacts were not treated as neutral omissions");
+
+    await File.WriteAllTextAsync(
+        priorProfile,
+        $"{{\"sessionId\":\"{session}\",\"campaignGeneration\":{generation},\"hooksEnabled\":true}}\n");
+    var unsafeCurrent = await new EvidenceCollector().CollectAsync(
+        state,
+        Path.Combine(temp.Path, "unsafe-current-exports"),
+        resourceStartPath: package);
+    Require(unsafeCurrent.DirtyEvidence,
+        "an unsafe current-session canonical row was not marked dirty");
+
+    File.Delete(priorProfile);
+    await File.AppendAllTextAsync(activeCanonical, "{\"recordType\":\"snapshot-observation\"");
+    var malformedCurrent = await new EvidenceCollector().CollectAsync(
+        state,
+        Path.Combine(temp.Path, "malformed-current-exports"),
+        resourceStartPath: package);
+    Require(malformedCurrent.DirtyEvidence,
+        "a malformed current-session snapshot row was not marked dirty");
 }
 
 static async Task ChecklistAsync()
@@ -763,6 +879,136 @@ static async Task PrepareAndResumeAsync()
         "resume payload refresh lost dashboard autostart");
     request = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(status, "dashboard_campaign_request.json")));
     Require(request.RootElement.GetProperty("command").GetString() == "resume", "resume marker command mismatch");
+}
+
+static async Task ReadinessPrepareAsync()
+{
+    using var temp = new TempDirectory();
+    var package = CreatePackage(temp.Path);
+    var game = Path.Combine(temp.Path, "readiness-game");
+    Directory.CreateDirectory(Path.Combine(game, "Mods"));
+    var executable = Path.Combine(game, "CrabChampions.exe");
+    await File.WriteAllBytesAsync(executable, Array.Empty<byte>());
+    var service = new CampaignService(new DashboardStateStore(Path.Combine(temp.Path, "readiness-state")));
+    const string code = "ABCD2345";
+    var state = await service.PrepareReadinessCampaignAsync(
+        new GameInstallation(game, executable, "test"),
+        CampaignRole.Host,
+        correlationCode: code,
+        resourceStartPath: package);
+    var pairing = state.ReadinessPairing
+                  ?? throw new InvalidOperationException("readiness campaign lost local pairing metadata");
+    Require(state.ProfileId == ReadinessCampaignContracts.ProfileId
+            && pairing.CorrelationCode == code
+            && pairing.InventoryStage == ReadinessCampaignContracts.DeferredInventoryStage,
+        "readiness state did not retain the local-only pairing contract");
+
+    var scripts = Path.Combine(game, "Mods", "CrabRuntimeProbe", "Scripts");
+    var config = await File.ReadAllTextAsync(Path.Combine(scripts, "config.txt"));
+    Require(config.Contains("campaignProfile = crabsync-readiness-campaign", StringComparison.Ordinal)
+            && config.Contains("readinessCampaignEnabled = true", StringComparison.Ordinal)
+            && config.Contains("readinessInventoryStage = disabled", StringComparison.Ordinal)
+            && config.Contains($"readinessPairId = {pairing.PairId}", StringComparison.Ordinal)
+            && !config.Contains(code, StringComparison.Ordinal)
+            && !config.Contains("readinessInventoryIntervalSeconds", StringComparison.Ordinal),
+        "readiness config exposed a code or enabled inventory collection");
+
+    var status = Path.Combine(scripts, "results");
+    var manifestJson = await File.ReadAllTextAsync(Path.Combine(status, "readiness_campaign_manifest.json"));
+    var requestJson = await File.ReadAllTextAsync(Path.Combine(status, "dashboard_campaign_request.json"));
+    Require(!manifestJson.Contains(code, StringComparison.Ordinal)
+            && !requestJson.Contains(code, StringComparison.Ordinal),
+        "readiness result artifacts persisted the human correlation code");
+    using var manifest = JsonDocument.Parse(manifestJson);
+    Require(manifest.RootElement.GetProperty("inventoryStage").GetString() == "disabled"
+            && manifest.RootElement.GetProperty("pairId").GetString() == pairing.PairId
+            && manifest.RootElement.GetProperty("enabledChannels").GetArrayLength() == 5,
+        "readiness manifest did not retain the bounded deferred inventory contract");
+
+    await service.ResumeAsync();
+    var resumedConfig = await File.ReadAllTextAsync(Path.Combine(scripts, "config.txt"));
+    Require(resumedConfig.Contains("readinessInventoryStage = disabled", StringComparison.Ordinal)
+            && !resumedConfig.Contains(code, StringComparison.Ordinal),
+        "readiness resume did not restore the code-private deferred inventory profile");
+    await ThrowsAsync<ArgumentException>(() => service.PrepareReadinessCampaignAsync(
+        new GameInstallation(game, executable, "test"), CampaignRole.JoinedClient, resourceStartPath: package));
+}
+
+static async Task ReadinessEvidenceAndBundleAsync()
+{
+    using var temp = new TempDirectory();
+    const long generation = 17;
+    const string session = "session-readiness";
+    const string machine = "machine-readiness";
+    const string manifestId = "readiness-manifest-12345678";
+    var pairId = ReadinessCampaignContracts.DerivePairId("ABCD2345");
+    var scope = new ReadinessEvidenceScope(
+        ReadinessCampaignContracts.CampaignId, generation, session, machine, CampaignRole.Host, pairId);
+    var scripts = Path.Combine(temp.Path, "game", "Mods", "CrabRuntimeProbe", "Scripts");
+    var status = Path.Combine(scripts, "results");
+    Directory.CreateDirectory(status);
+    var evidencePath = Path.Combine(status, $"access_evidence_{session}.jsonl");
+    await File.WriteAllTextAsync(evidencePath, string.Join('\n', new[]
+    {
+        ReadinessPeerJson(generation, session, machine, "host", pairId, 1),
+        ReadinessTerminalJson(generation, session, machine, "host", pairId, 2)
+    }) + "\n");
+
+    var reader = new ReadinessEvidenceReader();
+    var evidence = await reader.ReadAsync(status, scope);
+    Require(evidence.PeerSnapshots.Count == 1 && evidence.TerminalLifecycles.Count == 1 && evidence.Rejections.Count == 0,
+        "closed readiness rows were not accepted as a complete active scope");
+    var report = ReadinessReportReducer.Reduce(scope, evidence);
+    Require(report.Gates.Single(gate => gate.Id == "local-safe-scalars").Disposition == ReadinessGateDisposition.Confirmed
+            && report.Gates.Single(gate => gate.Id == "peer-visible-playerstate").Disposition == ReadinessGateDisposition.Blocked
+            && report.Gates.Single(gate => gate.Id == "inventory-item-proof").Disposition == ReadinessGateDisposition.Blocked,
+        "readiness report overclaimed remote or inventory evidence");
+
+    await File.AppendAllTextAsync(evidencePath, "{truncated\n");
+    var malformed = await reader.ReadAsync(status, scope);
+    Require(malformed.Rejections.Any(rejection => rejection.Code == "invalid-json"),
+        "a malformed active readiness row was treated as neutral evidence");
+    await File.WriteAllTextAsync(evidencePath, string.Join('\n', new[]
+    {
+        ReadinessPeerJson(generation, session, machine, "host", pairId, 1),
+        ReadinessTerminalJson(generation, session, machine, "host", pairId, 2)
+    }) + "\n");
+
+    var pairing = new ReadinessCampaignLocalPairing(
+        "ABCD2345", pairId, manifestId, ReadinessCampaignContracts.DeferredInventoryStage,
+        ReadinessCampaignContracts.DefaultChannels(), DateTimeOffset.UtcNow.AddMinutes(-1));
+    var game = Path.Combine(temp.Path, "game");
+    var executable = Path.Combine(game, "CrabChampions.exe");
+    await File.WriteAllBytesAsync(executable, Array.Empty<byte>());
+    var state = new LocalCampaignState(
+        2, ReadinessCampaignContracts.CampaignId, ReadinessCampaignContracts.DefaultCampaignName,
+        generation, session, machine, CampaignRole.Host, game, executable, status, "monitoring",
+        pairing.CreatedAtUtc, DateTimeOffset.UtcNow, string.Empty, ReadinessCampaignContracts.ProfileId, pairing);
+    await File.WriteAllTextAsync(Path.Combine(status, "live_status.slot0.json"),
+        ReadinessStatusJson(generation, session, machine, pairId, manifestId));
+    await File.WriteAllTextAsync(Path.Combine(status, "readiness_campaign_manifest.json"),
+        ReadinessManifestJson(generation, session, machine, "host", pairId, manifestId, pairing.CreatedAtUtc));
+    var package = CreatePackage(temp.Path);
+    var collection = await new EvidenceCollector().CollectAsync(
+        state, Path.Combine(temp.Path, "exports"), resourceStartPath: package);
+    Require(!collection.DirtyEvidence
+            && File.Exists(Path.Combine(collection.BundleDirectory, "readiness_report.json"))
+            && File.Exists(Path.Combine(collection.BundleDirectory, "readiness_report.md"))
+            && Directory.EnumerateFiles(collection.BundleDirectory, "readiness_campaign_manifest.json", SearchOption.AllDirectories).Count() == 1,
+        "a clean readiness collection did not preserve its report and pairing manifest");
+
+    var prepared = DateTimeOffset.UtcNow.AddMinutes(-3);
+    var collected = DateTimeOffset.UtcNow;
+    var host = await CreateReadinessBundleAsync(temp.Path, "host", "host", "machine-host", "session-host", prepared, collected, pairId);
+    var joined = await CreateReadinessBundleAsync(temp.Path, "joined", "joined-client", "machine-client", "session-client",
+        prepared.AddSeconds(5), collected.AddSeconds(5), pairId);
+    var combined = await new BundleCorrelationService().CombineAsync(new[] { host, joined }, Path.Combine(temp.Path, "combined"));
+    Require(combined.CorrelationEstablished, "matching readiness pair manifests did not correlate");
+    var otherPair = ReadinessCampaignContracts.DerivePairId("WXYZ6789");
+    var mismatch = await CreateReadinessBundleAsync(temp.Path, "mismatch", "joined-client", "machine-other", "session-other",
+        prepared.AddSeconds(10), collected.AddSeconds(10), otherPair);
+    var mismatched = await new BundleCorrelationService().CombineAsync(new[] { host, mismatch }, Path.Combine(temp.Path, "mismatch-output"));
+    Require(!mismatched.CorrelationEstablished, "different derived readiness pair IDs were correlated");
 }
 
 static Task GameProcessExitDetectorAsync()
@@ -1188,6 +1434,265 @@ static string CreatePackage(string root)
     return package;
 }
 
+static string ReadinessPeerJson(
+    long generation,
+    string session,
+    string machine,
+    string selectedRole,
+    string pairId,
+    long sequence)
+{
+    object Scalar(decimal value) => new { status = "observed", value };
+    object Fingerprint(string value) => new { status = "observed", value, valueFingerprint = value };
+    return JsonSerializer.Serialize(new
+    {
+        schemaVersion = 1,
+        recordType = "readiness-peer-snapshot",
+        @event = "Readiness.PeerSnapshot",
+        readinessSchema = "peer-snapshot-v1",
+        campaignId = ReadinessCampaignContracts.CampaignId,
+        campaignGeneration = generation,
+        sessionId = session,
+        machineId = machine,
+        sequence,
+        timestampUtc = DateTimeOffset.Parse("2026-07-11T20:00:00Z").AddSeconds(sequence),
+        selectedRole,
+        observedRole = selectedRole,
+        authorityStatus = selectedRole == "host" ? "runtime-authority" : "runtime-non-authority",
+        profileId = ReadinessCampaignContracts.ProfileId,
+        readinessPairId = pairId,
+        lifecycle = new { state = "stable", generation = 1, context = "run", stable = true },
+        source = new { worldFingerprint = "world-readiness", localPlayerStateFingerprint = "player-readiness" },
+        subjectCap = 4,
+        subjects = new[]
+        {
+            new
+            {
+                playerStateFingerprint = "player-readiness",
+                relation = "local",
+                visibility = "local",
+                authorityStatus = selectedRole == "host" ? "runtime-authority" : "runtime-non-authority",
+                observedRole = selectedRole,
+                stability = "stable",
+                categoryResults = new
+                {
+                    health = new { result = "ok", fields = new { currentHealth = Scalar(100m), currentMaxHealth = Scalar(100m), baseMaxHealth = Scalar(100m), maxHealthMultiplier = Scalar(1m) } },
+                    crystals = new { result = "ok", fields = new { crystals = Scalar(20m) } },
+                    slots = new { result = "ok", fields = new { weaponModSlots = Scalar(4m), abilityModSlots = Scalar(4m), meleeModSlots = Scalar(4m), perkSlots = Scalar(4m) } },
+                    equipment = new { result = "ok", fields = new { weaponFingerprint = Fingerprint("weapon-readiness"), abilityFingerprint = Fingerprint("ability-readiness"), meleeFingerprint = Fingerprint("melee-readiness") } }
+                }
+            }
+        },
+        result = "partial",
+        changeKind = "initial",
+        dirtyEvidence = false,
+        crashSuspected = false,
+        safety = new
+        {
+            writesDisabled = true,
+            rpcCallsDisabled = true,
+            mutationDisabled = true,
+            hooksDisabled = true,
+            runtimeDiscoveryDisabled = true,
+            inventoryStagesDisabled = true,
+            rawIdentityDisabled = true
+        }
+    });
+}
+
+static string ReadinessTerminalJson(
+    long generation,
+    string session,
+    string machine,
+    string selectedRole,
+    string pairId,
+    long sequence) => JsonSerializer.Serialize(new
+{
+    schemaVersion = 1,
+    recordType = "readiness-lifecycle-terminal",
+    @event = "Readiness.LifecycleTerminal",
+    readinessSchema = "terminal-lifecycle-v1",
+    campaignId = ReadinessCampaignContracts.CampaignId,
+    campaignGeneration = generation,
+    sessionId = session,
+    machineId = machine,
+    sequence,
+    timestampUtc = DateTimeOffset.Parse("2026-07-11T20:00:00Z").AddSeconds(sequence),
+    selectedRole,
+    profileId = ReadinessCampaignContracts.ProfileId,
+    readinessPairId = pairId,
+    priorLifecycle = new { state = "stable", generation = 1, context = "run", stable = true },
+    nextLifecycle = new { state = "stopped", generation = 1, context = "run", stable = false },
+    reason = "stop-requested",
+    baselineReady = true,
+    peerSamplingSummary = new { peerSnapshotCount = 1, visiblePlayerCount = 1, stablePlayerCount = 1 },
+    dirtyEvidence = false,
+    crashSuspected = false,
+    safety = new
+    {
+        writesDisabled = true,
+        rpcCallsDisabled = true,
+        mutationDisabled = true,
+        hooksDisabled = true,
+        runtimeDiscoveryDisabled = true,
+        inventoryStagesDisabled = true,
+        rawIdentityDisabled = true
+    }
+});
+
+static string ReadinessManifestJson(
+    long generation,
+    string session,
+    string machine,
+    string selectedRole,
+    string pairId,
+    string manifestId,
+    DateTimeOffset preparedAtUtc) => JsonSerializer.Serialize(new
+{
+    schemaVersion = ReadinessCampaignContracts.ManifestSchema,
+    manifestId,
+    campaignId = ReadinessCampaignContracts.CampaignId,
+    campaignGeneration = generation,
+    sessionId = session,
+    machineId = machine,
+    selectedRole,
+    profileId = ReadinessCampaignContracts.ProfileId,
+    pairId,
+    preparedAtUtc,
+    inventoryStage = ReadinessCampaignContracts.DeferredInventoryStage,
+    enabledChannels = ReadinessCampaignContracts.DefaultChannels(),
+    peerSnapshotsEnabled = true,
+    maxPeers = ReadinessCampaignContracts.MaxPeers,
+    intervals = new
+    {
+        healthSeconds = ReadinessCampaignContracts.HealthIntervalSeconds,
+        scalarSeconds = ReadinessCampaignContracts.ScalarIntervalSeconds,
+        inventorySeconds = ReadinessCampaignContracts.DisabledInventoryIntervalSeconds,
+        unchangedHeartbeatSeconds = ReadinessCampaignContracts.UnchangedHeartbeatSeconds
+    },
+    safety = new
+    {
+        readOnly = true,
+        writeProbes = false,
+        rpcCalls = false,
+        mutation = false,
+        hooks = false,
+        runtimeDiscovery = false,
+        deepInventory = false,
+        rawIdentity = false
+    }
+}, JsonOptions());
+
+static string ReadinessStatusJson(
+    long generation,
+    string session,
+    string machine,
+    string pairId,
+    string manifestId) => JsonSerializer.Serialize(new
+{
+    schemaVersion = 1,
+    sequence = 10,
+    writtenAtUtc = DateTimeOffset.UtcNow,
+    heartbeatAtUtc = DateTimeOffset.UtcNow,
+    campaignId = ReadinessCampaignContracts.CampaignId,
+    campaignName = ReadinessCampaignContracts.DefaultCampaignName,
+    campaignGeneration = generation,
+    machineId = machine,
+    sessionId = session,
+    selectedRole = "host",
+    observedRole = "host",
+    authorityStatus = "runtime-authority",
+    lifecycle = new { state = "stable", generation = 1, world = "Island", context = "run", stable = true },
+    runtime = new
+    {
+        gameProcessRunning = true,
+        gameProcessState = "running",
+        ue4ssState = "loaded",
+        runtimeProbeState = "healthy",
+        runtimeProbeLoaded = true,
+        currentProbeStage = "readiness:collecting-local-scalars",
+        activeProfile = ReadinessCampaignContracts.ProfileId,
+        collectionReady = true,
+        readiness = new
+        {
+            enabled = true,
+            pairId,
+            manifestId,
+            inventoryStage = "disabled",
+            stageState = "collecting-local-scalars",
+            enabledChannels = ReadinessCampaignContracts.DefaultChannels(),
+            safeReadChannelsReady = true,
+            visiblePlayerCount = 1,
+            stablePlayerCount = 1,
+            peerSnapshotCount = 1,
+            inventoryCategoryCount = 0,
+            maxPeers = 4,
+            maxInventoryItems = 0,
+            maxEnhancements = 0,
+            detail = "local scalar readiness foundation; remote visibility and inventory are deferred"
+        }
+    },
+    safety = new
+    {
+        writesDisabled = true,
+        rpcsDisabled = true,
+        mutationDisabled = true,
+        hudHookDisabled = true,
+        rawIdentityDisabled = true,
+        hooksDisabled = true,
+        runtimeDiscoveryDisabled = true,
+        inventoryStagesDisabled = true,
+        inventoryDepth = 0,
+        circuitBreakers = new { }
+    },
+    checklist = new { },
+    evidenceHealth = new { state = "healthy", canonicalRows = 2, rejectedRows = 0, dirtyRows = 0 },
+    crashSuspected = false,
+    dirtyEvidence = false
+});
+
+static async Task<string> CreateReadinessBundleAsync(
+    string root,
+    string label,
+    string role,
+    string machine,
+    string session,
+    DateTimeOffset prepared,
+    DateTimeOffset collected,
+    string pairId)
+{
+    var directory = Path.Combine(root, $"readiness-bundle-{label}");
+    Directory.CreateDirectory(directory);
+    var payload = Path.Combine(directory, "payload.txt");
+    await File.WriteAllTextAsync(payload, "clean local readiness evidence");
+    var provenance = Path.Combine(directory, "provenance");
+    Directory.CreateDirectory(provenance);
+    var catalog = Path.Combine(provenance, "crabsync_coverage_catalog.json");
+    await File.WriteAllTextAsync(catalog,
+        "{\"schemaVersion\":\"coverage-catalog-v1\",\"catalogHash\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"rows\":[{\"id\":\"row\",\"category\":\"health\",\"symbolPath\":\"/Test:Health\",\"coverageDisposition\":\"needs-coverage\"}]}" );
+    var readinessDirectory = Path.Combine(directory, "evidence", "derived-redacted");
+    Directory.CreateDirectory(readinessDirectory);
+    var readinessManifest = Path.Combine(readinessDirectory, "readiness_campaign_manifest.json");
+    await File.WriteAllTextAsync(readinessManifest, ReadinessManifestJson(
+        42, session, machine, role, pairId, $"readiness-manifest-{label}-12345678", prepared));
+    var files = new[]
+    {
+        Entry(directory, payload, "generated-report"),
+        Entry(directory, catalog, "provenance-byte-copy"),
+        Entry(directory, readinessManifest, "redacted-derivative")
+    };
+    var manifest = new BundleManifest(
+        1, "crabruntimeprobe-evidence-bundle-v1", ReadinessCampaignContracts.CampaignId,
+        ReadinessCampaignContracts.DefaultCampaignName, ReadinessCampaignContracts.ProfileId,
+        42, machine, session, role, prepared, collected, false, false, BundleSafety.ReadOnly,
+        1, "coverage-catalog-v1", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", true, files);
+    await File.WriteAllTextAsync(Path.Combine(directory, "bundle_manifest.json"),
+        JsonSerializer.Serialize(manifest, JsonOptions()));
+    var zip = directory + ".zip";
+    ZipFile.CreateFromDirectory(directory, zip);
+    return zip;
+}
+
 static async Task<string> CreateBundleAsync(
     string root, string role, string machine, string session, DateTimeOffset prepared, DateTimeOffset collected)
 {
@@ -1264,7 +1769,8 @@ static string SnapshotRow(
     bool hooksDisabled = true,
     bool dirtyEvidence = false,
     bool crashSuspected = false,
-    bool stable = true)
+    bool stable = true,
+    string? observationProfile = null)
 {
     var observedField = new Dictionary<string, object?>
     {
@@ -1311,6 +1817,8 @@ static string SnapshotRow(
         ["dirtyEvidence"] = dirtyEvidence,
         ["crashSuspected"] = crashSuspected
     };
+    if (!string.IsNullOrWhiteSpace(observationProfile))
+        row["observationProfile"] = observationProfile;
     return JsonSerializer.Serialize(row);
 }
 

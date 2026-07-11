@@ -491,6 +491,47 @@
             <TabItem Header="Research" AutomationProperties.Name="Progressive broad observation research">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Margin="18">
+                        <Border Style="{StaticResource Card}" BorderBrush="{StaticResource StateBlueBrush}" BorderThickness="1" Margin="0,0,0,12"
+                                AutomationProperties.Name="Paired readiness campaign setup">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource SmallLabel}" Text="PAIRED READINESS CAMPAIGN · READ-ONLY"/>
+                                <TextBlock FontSize="21" FontWeight="SemiBold" Margin="0,5,0,4" Text="Prepare bounded host + joined-client evidence"/>
+                                <TextBlock Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"
+                                           Text="This is separate from the Play Guide. It gathers only reviewed local health, crystal, slot, equipment, and lifecycle evidence. Remote PlayerState visibility, hooks, writes, RPCs, runtime discovery, and all inventory reads remain disabled or deferred."/>
+                                <Grid Margin="0,14,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="1.25*"/>
+                                        <ColumnDefinition Width="1.45*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Margin="0,0,14,0">
+                                        <TextBlock Style="{StaticResource SmallLabel}" Text="OFFLINE CORRELATION CODE"/>
+                                        <DockPanel Margin="0,6,0,0">
+                                            <Button DockPanel.Dock="Right" Command="{Binding GenerateReadinessCodeCommand}" Content="Generate code" Margin="8,0,0,0"
+                                                    AutomationProperties.Name="Generate readiness correlation code"/>
+                                            <TextBox Text="{Binding ReadinessCorrelationCode, UpdateSourceTrigger=PropertyChanged}" MinWidth="155"
+                                                     CharacterCasing="Upper" MaxLength="10"
+                                                     AutomationProperties.Name="Readiness correlation code"
+                                                     ToolTip="Host generates this local code; joined client enters it exactly."/>
+                                        </DockPanel>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="1" Margin="0,0,14,0">
+                                        <TextBlock Style="{StaticResource SmallLabel}" Text="SETUP / INVENTORY POLICY"/>
+                                        <TextBlock Margin="0,6,0,0" Text="{Binding ReadinessSetupHint}" TextWrapping="Wrap"/>
+                                        <TextBlock Margin="0,5,0,0" Foreground="{StaticResource MutedBrush}" FontSize="11"
+                                                   Text="{Binding ReadinessInventorySummary}" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2" VerticalAlignment="Bottom">
+                                        <Button Style="{StaticResource PrimaryButton}" Command="{Binding PrepareReadinessCampaignCommand}"
+                                                Content="Prepare paired readiness" MinWidth="205"
+                                                AutomationProperties.Name="Prepare paired readiness campaign"/>
+                                    </StackPanel>
+                                </Grid>
+                                <TextBlock Margin="0,12,0,0" Foreground="{StaticResource StateBlueBrush}" Text="{Binding ReadinessPairingSummary}" TextWrapping="Wrap"/>
+                                <TextBlock Margin="0,4,0,0" Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap"
+                                           Text="The code stays in dashboard-local state. Runtime-facing files contain only a derived opaque pair ID; no network listener, relay, or gameplay transport is created."/>
+                            </StackPanel>
+                        </Border>
                         <Border Style="{StaticResource Card}" BorderBrush="{StaticResource AccentBrush}" BorderThickness="1" Margin="0,0,0,12">
                             <Grid>
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

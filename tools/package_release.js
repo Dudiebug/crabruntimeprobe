@@ -6,7 +6,7 @@ const { spawnSync } = require('child_process');
 
 const root = process.cwd();
 const distDir = path.join(root, 'dist');
-const releaseVersion = '1.0.4';
+const releaseVersion = '1.1.0';
 const defaultZip = path.join(distDir, `CrabRuntimeProbe-v${releaseVersion}-UE4SS.zip`);
 const supportMods = ['BPML_GenericFunctions', 'BPModLoaderMod', 'Keybinds', 'shared'];
 const rootRuntimeFiles = ['UE4SS.dll', 'dwmapi.dll', 'UE4SS-settings.ini', 'imgui.ini'];
@@ -121,12 +121,16 @@ function writeInstallTxt(stagingDir) {
     'Crab Champions\\CrabChampions\\Binaries\\Win64',
     '',
     'For a clean install, remove an older Mods\\CrabRuntimeProbe folder first.',
-    'Do not reuse v1.0.2 runtime configuration or trust data.',
+    'Do not reuse prior runtime configuration, campaign manifests, or trust data.',
     '',
     'Normal Play Guide is hook-free. Progressive Broad Observation ships with',
     'an empty trusted pool and no prearmed canary.',
     '',
     'Deep inventory, InventoryInfo, health, write, and RPC probes are disabled by default.',
+    '',
+    'The opt-in CrabSync Readiness Campaign is local-only: it does not enumerate',
+    'remote PlayerState objects, traverse inventory, or provide transport/sync/apply',
+    'behavior. See docs\\CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md before field testing.',
     '',
     'UE4SS is redistributed under UE4SS-LICENSE.txt.',
     '',
@@ -236,6 +240,7 @@ function main() {
   copyDir(path.join(root, 'campaign'), path.join(stagingDir, 'campaign'));
   copyDir(path.join(root, 'schemas'), path.join(stagingDir, 'schemas'));
   for (const doc of [
+    'CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md',
     'CRABSYNC_FULL_CAMPAIGN_GUIDE.md',
     'CRABSYNC_COVERAGE_CATALOG.md',
     'INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md',
@@ -258,6 +263,16 @@ function main() {
   for (const artifactName of requiredCampaignArtifacts) {
     const artifactPath = path.join(stagingDir, 'campaign', artifactName);
     if (!fs.existsSync(artifactPath)) fail(`Missing required progressive campaign artifact: ${artifactName}`);
+  }
+  const requiredReadinessSchemas = [
+    'readiness-campaign-manifest-v1.schema.json',
+    'peer-snapshot-v1.schema.json',
+    'terminal-lifecycle-v1.schema.json'
+  ];
+  for (const schemaName of requiredReadinessSchemas) {
+    if (!fs.existsSync(path.join(stagingDir, 'schemas', schemaName))) {
+      fail(`Missing required readiness schema: ${schemaName}`);
+    }
   }
   const candidateCatalog = JSON.parse(fs.readFileSync(path.join(stagingDir, 'campaign', 'hook_candidate_catalog.json'), 'utf8'));
   const defaults = JSON.parse(fs.readFileSync(path.join(stagingDir, 'campaign', 'progressive_observation.defaults.json'), 'utf8'));
@@ -295,6 +310,8 @@ function main() {
       liveStatus: 'live-status-v1', snapshotObservation: 'snapshot-observation-v1',
       campaignControl: 'campaign-control-v1', evidenceBundle: 'evidence-bundle-v1',
       coverageCatalog: 'coverage-catalog-v1', compatibilityFingerprint: 'compatibility-fingerprint-v1',
+      readinessCampaignManifest: 'readiness-campaign-manifest-v1', peerSnapshot: 'peer-snapshot-v1',
+      terminalLifecycle: 'terminal-lifecycle-v1',
       hookBreadcrumb: 'hook-breadcrumb-v1', hookCandidateCatalog: 'hook-candidate-catalog-v1',
       hookQuarantine: 'hook-quarantine-v1', hookRunClassification: 'hook-run-classification-v1',
       hookRunConsumed: 'hook-run-consumed-v1',

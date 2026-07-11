@@ -48,22 +48,22 @@ jobs:
         shell: powershell
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-all-tests.ps1
 
-      - name: Build and verify v1.0.4 release layouts
+      - name: Build and verify v1.1.0 release layouts
         shell: powershell
         run: |
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1 -Version 1.0.4
-          if ($LASTEXITCODE -ne 0) { throw "Canonical v1.0.4 release build failed." }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1 -Version 1.1.0
+          if ($LASTEXITCODE -ne 0) { throw "Canonical v1.1.0 release build failed." }
           $canonicalExtract = Join-Path $env:RUNNER_TEMP "canonical-release"
-          Expand-Archive -LiteralPath "dist\CrabRuntimeProbe-v1.0.4-win-x64.zip" -DestinationPath $canonicalExtract -Force
+          Expand-Archive -LiteralPath "dist\CrabRuntimeProbe-v1.1.0-win-x64.zip" -DestinationPath $canonicalExtract -Force
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release.ps1 `
-            -BundlePath (Join-Path $canonicalExtract "CrabRuntimeProbe-v1.0.4-win-x64")
+            -BundlePath (Join-Path $canonicalExtract "CrabRuntimeProbe-v1.1.0-win-x64")
           if ($LASTEXITCODE -ne 0) { throw "Extracted canonical release verification failed." }
 
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-ue4ss-bundle.ps1 `
-            -CrabInvSyncRoot . -Version 1.0.4
-          if ($LASTEXITCODE -ne 0) { throw "UE4SS v1.0.4 release build failed." }
+            -CrabInvSyncRoot . -Version 1.1.0
+          if ($LASTEXITCODE -ne 0) { throw "UE4SS v1.1.0 release build failed." }
           $ue4ssExtract = Join-Path $env:RUNNER_TEMP "ue4ss-release"
-          Expand-Archive -LiteralPath "dist\CrabRuntimeProbe-v1.0.4-UE4SS.zip" -DestinationPath $ue4ssExtract -Force
+          Expand-Archive -LiteralPath "dist\CrabRuntimeProbe-v1.1.0-UE4SS.zip" -DestinationPath $ue4ssExtract -Force
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-ue4ss-bundle.ps1 $ue4ssExtract
           if ($LASTEXITCODE -ne 0) { throw "Extracted UE4SS release verification failed." }
 

@@ -243,6 +243,38 @@ local function resultFor(fields, errors)
   return observed > 0 and 'ok' or 'partial'
 end
 
+-- This is intentionally the same reviewed, fixed-field path used by the
+-- hook-free local sampler.  It does not inspect arrays, unwrap inventory
+-- elements, read InventoryInfo/Enhancements, or retain the PlayerState after
+-- the caller returns.  The readiness peer sampler consumes this helper only
+-- for PlayerStates already visible to the current process.
+function sampler.readReviewedScalarCategories(safe, playerState)
+  local categories = {}
+  local aggregate = 'ok'
+  for _, definition in ipairs(CATEGORY_DEFINITIONS) do
+    local readOk, fieldsOrErr, errors = pcall(definition.read, safe, playerState)
+    local fields
+    if readOk then
+      fields = type(fieldsOrErr) == 'table' and fieldsOrErr or {}
+      errors = type(errors) == 'table' and errors or {}
+    else
+      fields = { sample = errorField(SOURCE_SCOPE, fieldsOrErr) }
+      errors = { clean(fieldsOrErr, 192) }
+    end
+    local result = resultFor(fields, errors)
+    categories[definition.id] = {
+      result = result,
+      fields = fields
+    }
+    if result == 'error' then
+      aggregate = 'error'
+    elseif result ~= 'ok' and aggregate == 'ok' then
+      aggregate = 'partial'
+    end
+  end
+  return categories, aggregate
+end
+
 function sampler.new(config, safe, evidenceWriter, state)
   local o = {
     config = config or {},

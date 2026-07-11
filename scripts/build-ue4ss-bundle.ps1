@@ -4,7 +4,7 @@ param(
 
   [string]$OutputDir = "dist",
   [ValidatePattern('^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$')]
-  [string]$Version = "1.0.4",
+  [string]$Version = "1.1.0",
   [switch]$NoZip
 )
 
@@ -140,13 +140,17 @@ Extract ZIP contents into:
 Crab Champions\CrabChampions\Binaries\Win64
 
 For a clean install, remove an older Mods\CrabRuntimeProbe folder before
-extracting this bundle. Do not reuse v1.0.2 runtime configuration or trust data.
+extracting this bundle. Do not reuse prior runtime configuration, campaign manifests, or trust data.
 
 Normal Play Guide is hook-free. Progressive Broad Observation begins with an
 empty trusted pool and only recommends OnRep_IslandRewardRarity at validation
 Depth 1; no canary is prearmed by this package.
 
 Deep inventory, InventoryInfo, health, write, and RPC probes are disabled by default.
+
+The opt-in CrabSync Readiness Campaign is local-only: it does not enumerate
+remote PlayerState objects, traverse inventory, or provide transport/sync/apply
+behavior. See docs\CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md before field testing.
 
 UE4SS is redistributed under UE4SS-LICENSE.txt.
 
@@ -239,6 +243,7 @@ try {
   Copy-CleanDirectory -Source (Join-Path $RepoRoot "campaign") -Destination (Join-Path $BundleRoot "campaign")
   Copy-CleanDirectory -Source (Join-Path $RepoRoot "schemas") -Destination (Join-Path $BundleRoot "schemas")
   foreach ($doc in @(
+    "CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md",
     "CRABSYNC_FULL_CAMPAIGN_GUIDE.md",
     "CRABSYNC_COVERAGE_CATALOG.md",
     "INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md",
@@ -261,6 +266,16 @@ try {
     $progressiveArtifactPath = Join-Path $BundleRoot "campaign\$progressiveArtifactName"
     if (-not (Test-Path -LiteralPath $progressiveArtifactPath -PathType Leaf)) {
       throw "Missing required progressive campaign artifact: $progressiveArtifactName"
+    }
+  }
+  foreach ($readinessSchemaName in @(
+    "readiness-campaign-manifest-v1.schema.json",
+    "peer-snapshot-v1.schema.json",
+    "terminal-lifecycle-v1.schema.json"
+  )) {
+    $readinessSchemaPath = Join-Path $BundleRoot "schemas\$readinessSchemaName"
+    if (-not (Test-Path -LiteralPath $readinessSchemaPath -PathType Leaf)) {
+      throw "Missing required readiness schema: $readinessSchemaName"
     }
   }
   $candidateCatalog = Get-Content -Raw -LiteralPath (Join-Path $BundleRoot "campaign\hook_candidate_catalog.json") | ConvertFrom-Json -ErrorAction Stop
@@ -303,6 +318,8 @@ try {
       liveStatus = "live-status-v1"; snapshotObservation = "snapshot-observation-v1"
       campaignControl = "campaign-control-v1"; evidenceBundle = "evidence-bundle-v1"
       coverageCatalog = "coverage-catalog-v1"; compatibilityFingerprint = "compatibility-fingerprint-v1"
+      readinessCampaignManifest = "readiness-campaign-manifest-v1"; peerSnapshot = "peer-snapshot-v1"
+      terminalLifecycle = "terminal-lifecycle-v1"
       hookBreadcrumb = "hook-breadcrumb-v1"; hookCandidateCatalog = "hook-candidate-catalog-v1"
       hookQuarantine = "hook-quarantine-v1"; hookRunClassification = "hook-run-classification-v1"
       hookRunConsumed = "hook-run-consumed-v1"

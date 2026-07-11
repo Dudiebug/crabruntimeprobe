@@ -11,6 +11,40 @@ public enum SnapshotValueKind
     Json
 }
 
+/// <summary>
+/// Canonical observation-profile identities used to keep replay and export evidence
+/// within the active campaign mode. Historical normal-mode aliases intentionally
+/// normalize to the hook-free profile emitted by snapshot-observation-v1.
+/// </summary>
+public static class ObservationProfileIds
+{
+    public const string NormalPlayGuide = "normal-play-guide";
+    public const string ReadinessCampaign = "crabsync-readiness-campaign";
+    public const string ProgressiveBroadObservation = "progressive-broad-observation";
+
+    public static string Normalize(string? profileId)
+    {
+        var normalized = (profileId ?? string.Empty).Trim().ToLowerInvariant()
+            .Replace('_', '-').Replace(' ', '-');
+        return normalized switch
+        {
+            "" or NormalPlayGuide or "crabsync-full-observe" or "crabsync-snapshot-play-guide" =>
+                NormalPlayGuide,
+            ReadinessCampaign => ReadinessCampaign,
+            ProgressiveBroadObservation => ProgressiveBroadObservation,
+            _ => normalized
+        };
+    }
+
+    public static bool IsKnown(string? profileId) => !string.IsNullOrWhiteSpace(profileId)
+                                                      && Normalize(profileId) is
+                                                          NormalPlayGuide or ReadinessCampaign
+                                                          or ProgressiveBroadObservation;
+
+    public static bool IsReadinessReviewedCategory(string? category) =>
+        category is "health" or "crystals" or "slots" or "equipment";
+}
+
 /// <summary>A normalized value from a passive snapshot. Canonical values make replay deterministic.</summary>
 public sealed record SnapshotValue(
     SnapshotValueKind Kind,
@@ -97,15 +131,30 @@ public sealed record SnapshotReplayScope(
     string CampaignId = "",
     CampaignRole SelectedRole = CampaignRole.Unknown,
     string ObservedRole = "",
-    string MachineId = "")
+    string MachineId = "",
+    string ObservationProfile = ObservationProfileIds.NormalPlayGuide)
 {
+    public string NormalizedObservationProfile => ObservationProfileIds.Normalize(ObservationProfile);
+
     public static SnapshotReplayScope FromCampaign(LocalCampaignState campaign) => new(
         campaign.SessionId,
         campaign.Generation,
         campaign.CampaignId,
         campaign.Role,
         ObservedRole: string.Empty,
-        MachineId: campaign.MachineId);
+        MachineId: campaign.MachineId,
+        ObservationProfile: ObservationProfileIds.Normalize(campaign.ProfileId));
+
+    public static SnapshotReplayScope FromCampaign(
+        LocalCampaignState campaign,
+        string? observationProfile) => new(
+        campaign.SessionId,
+        campaign.Generation,
+        campaign.CampaignId,
+        campaign.Role,
+        ObservedRole: string.Empty,
+        MachineId: campaign.MachineId,
+        ObservationProfile: ObservationProfileIds.Normalize(observationProfile));
 }
 
 public enum SnapshotDeltaOperator

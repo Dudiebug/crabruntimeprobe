@@ -17,6 +17,7 @@ public static class CoreSelfTest
         var redacted = new EvidenceRedactor().Redact("{\"UniqueId\":\"76561198000000000\",\"PlayerName\":\"Dylan\"}");
         Require(!redacted.Contains("76561198000000000", StringComparison.Ordinal)
                 && !redacted.Contains("Dylan", StringComparison.Ordinal), "identity redaction", messages);
+        messages.AddRange(ReadinessCampaignContractSelfTest.Run());
         messages.AddRange(await ResearchContractSelfTest.RunAsync().ConfigureAwait(false));
         return messages;
     }

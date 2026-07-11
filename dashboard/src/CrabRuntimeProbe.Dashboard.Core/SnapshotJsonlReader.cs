@@ -169,13 +169,20 @@ public sealed class SnapshotJsonlReader
                 || timestamp is null || lifecycleGeneration < 0 || string.IsNullOrWhiteSpace(context)
                 || context.Length > 64 || !Categories.Contains(category)
                 || selectedRoleText is not ("host" or "joined-client") || selectedRole == CampaignRole.Unknown
-                || observationProfile is not ("normal-play-guide" or "progressive-broad-observation")
+                || observationProfile is not ("normal-play-guide" or "crabsync-readiness-campaign" or "progressive-broad-observation")
                 || !ObservedRoles.Contains(observedRole) || !hasWorldFingerprint || !hasPlayerStateFingerprint
                 || !IsOptionalFingerprint(worldFingerprint) || !IsOptionalFingerprint(playerStateFingerprint))
             {
                 error = Error(
                     "missing-required-field",
                     "A snapshot requires campaign/session/machine/generation/sequence/time/lifecycle/role/category/scope fields.");
+                return false;
+            }
+            if (observationProfile == ObservationProfileIds.ReadinessCampaign
+                && !ObservationProfileIds.IsReadinessReviewedCategory(category))
+            {
+                error = Error("readiness-category-blocked",
+                    "The readiness profile accepts only reviewed health, crystals, slots, and equipment snapshots.");
                 return false;
             }
 

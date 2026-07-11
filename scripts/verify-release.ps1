@@ -34,6 +34,7 @@ foreach ($file in @(
   "Payload\Mods\CrabRuntimeProbe\Scripts\campaign_state.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\status_writer.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\snapshot_sampler.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\peer_sampler.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\research_hook_catalog.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\progressive_json_reader.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\progressive_artifact_guard.lua",
@@ -48,6 +49,7 @@ foreach ($file in @(
   "Payload\Mods\CrabRuntimeProbe\Scripts\passive_hook_manager.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\inventory_stage_manager.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\full_observe_coordinator.lua",
+  "Payload\Mods\CrabRuntimeProbe\Scripts\readiness_observe_coordinator.lua",
   "Payload\Mods\CrabRuntimeProbe\Scripts\crabsync_catalog.lua",
   "campaign\crabsync-full-observe.profile.json",
   "campaign\crabsync-full-observe.checklist.json",
@@ -62,6 +64,9 @@ foreach ($file in @(
   "schemas\evidence-bundle-v1.schema.json",
   "schemas\coverage-catalog-v1.schema.json",
   "schemas\snapshot-observation-v1.schema.json",
+  "schemas\readiness-campaign-manifest-v1.schema.json",
+  "schemas\peer-snapshot-v1.schema.json",
+  "schemas\terminal-lifecycle-v1.schema.json",
   "schemas\compatibility-fingerprint-v1.schema.json",
   "schemas\hook-breadcrumb-v1.schema.json",
   "schemas\hook-candidate-catalog-v1.schema.json",
@@ -74,6 +79,7 @@ foreach ($file in @(
   "docs\CRABSYNC_FULL_CAMPAIGN_GUIDE.md",
   "docs\CRABSYNC_COVERAGE_CATALOG.md",
   "docs\INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md",
+  "docs\CRABRUNTIMEPROBE_V1.1.0_RELEASE_NOTES.md",
   "docs\CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md",
   "CHANGELOG.md",
   "LICENSE",
@@ -205,6 +211,10 @@ if (Test-Path -LiteralPath $configPath) {
     "allowFullObserveInventoryStages = false",
     "allowFullObserveRuntimeDiscovery = false",
     "progressiveObservationEnabled = false",
+    "campaignProfile = normal-play-guide",
+    "readinessCampaignEnabled = false",
+    "readinessPeerSnapshotsEnabled = false",
+    "readinessInventoryStage = disabled",
     "canaryCandidateId = unassigned",
     "canaryHookPathFingerprint = unassigned",
     "canaryValidationDepth = 0",
@@ -236,6 +246,13 @@ if (Test-Path -LiteralPath $payloadScriptsRoot -PathType Container) {
     Assert-CrabRuntimeProbeNormalSamplerSafety `
       -ScriptsRoot $payloadScriptsRoot `
       -Label 'release normal snapshot sampler'
+  } catch {
+    Add-Problem $_.Exception.Message
+  }
+  try {
+    Assert-CrabRuntimeProbeReadinessSamplerSafety `
+      -ScriptsRoot $payloadScriptsRoot `
+      -Label 'release readiness sampler'
   } catch {
     Add-Problem $_.Exception.Message
   }
@@ -296,8 +313,12 @@ if (Test-Path -LiteralPath $evidenceBundleSchemaPath -PathType Leaf) {
     $researchRule = @($evidenceBundleSchema.allOf | Where-Object {
       [string]$_.'if'.properties.profileId.const -eq 'progressive-broad-observation'
     }) | Select-Object -First 1
+    $readinessRule = @($evidenceBundleSchema.allOf | Where-Object {
+      [string]$_.'if'.properties.profileId.const -eq 'crabsync-readiness-campaign'
+    }) | Select-Object -First 1
     $normalSafety = $normalRule.then.properties.safety.properties
     $researchSafety = $researchRule.then.properties.safety.properties
+    $readinessSafety = $readinessRule.then.properties.safety.properties
     if ($null -eq $normalRule -or $normalSafety.hooksDisabled.const -ne $true -or
         $normalSafety.controlledResearchHooks.const -ne $false -or
         $normalSafety.compatibilityValidated.const -ne $false -or
@@ -316,6 +337,20 @@ if (Test-Path -LiteralPath $evidenceBundleSchemaPath -PathType Leaf) {
         $researchSafety.compatibilityValidated.const -ne $true -or
         $researchSafety.trustedDepthEnforced.const -ne $true) {
       Add-Problem 'Evidence-bundle progressive profile must require controlled, compatible, depth-enforced hooks with all non-hook mutation/discovery paths disabled.'
+    }
+    if ($null -eq $readinessRule -or $readinessSafety.writesDisabled.const -ne $true -or
+        $readinessSafety.rpcCallsDisabled.const -ne $true -or
+        $readinessSafety.mutationDisabled.const -ne $true -or
+        $readinessSafety.rawIdentityDisabled.const -ne $true -or
+        $readinessSafety.hudHookDisabled.const -ne $true -or
+        $readinessSafety.hooksDisabled.const -ne $true -or
+        $readinessSafety.runtimeDiscoveryDisabled.const -ne $true -or
+        $readinessSafety.inventoryStagesDisabled.const -ne $true -or
+        $readinessSafety.controlledResearchHooks.const -ne $false -or
+        $readinessSafety.compatibilityValidated.const -ne $false -or
+        $readinessSafety.trustedDepthEnforced.const -ne $false -or
+        [int]$readinessSafety.activeCanaries.const -ne 0) {
+      Add-Problem 'Evidence-bundle readiness profile must require hook-free, discovery-free, inventory-disabled, read-only safety.'
     }
   } catch {
     Add-Problem "Invalid mode-aware evidence-bundle safety schema: $($_.Exception.Message)"
@@ -348,6 +383,58 @@ foreach ($entry in $progressiveSchemaIdentities.GetEnumerator()) {
   }
 }
 
+$readinessSchemaIdentities = @(
+  [pscustomobject]@{
+    Relative = 'schemas\readiness-campaign-manifest-v1.schema.json'
+    Identity = 'readiness-campaign-manifest-v1'
+    ManifestProperty = 'readinessCampaignManifest'
+    SchemaVersion = 'readiness-campaign-manifest-v1'
+  },
+  [pscustomobject]@{
+    Relative = 'schemas\peer-snapshot-v1.schema.json'
+    Identity = 'peer-snapshot-v1'
+    ManifestProperty = 'peerSnapshot'
+    SchemaVersion = '1'
+  },
+  [pscustomobject]@{
+    Relative = 'schemas\terminal-lifecycle-v1.schema.json'
+    Identity = 'terminal-lifecycle-v1'
+    ManifestProperty = 'terminalLifecycle'
+    SchemaVersion = '1'
+  }
+)
+foreach ($entry in $readinessSchemaIdentities) {
+  $schemaPath = Join-Path $BundleRoot $entry.Relative
+  if (-not (Test-Path -LiteralPath $schemaPath -PathType Leaf)) { continue }
+  try {
+    $schema = Get-Content -Raw -LiteralPath $schemaPath | ConvertFrom-Json -ErrorAction Stop
+    if ([string]$schema.'$schema' -ne 'https://json-schema.org/draft/2020-12/schema' -or
+        [string]$schema.'$id' -notmatch [regex]::Escape("$($entry.Identity).schema.json") -or
+        [string]$schema.properties.schemaVersion.const -ne [string]$entry.SchemaVersion -or
+        $schema.additionalProperties -ne $false) {
+      Add-Problem "$($entry.Relative) does not enforce the expected closed $($entry.Identity) contract."
+    }
+  } catch {
+    Add-Problem "Invalid readiness schema $($entry.Relative): $($_.Exception.Message)"
+  }
+}
+
+try {
+  $readinessManifestSchema = Get-Content -Raw -LiteralPath (Join-Path $BundleRoot 'schemas\readiness-campaign-manifest-v1.schema.json') | ConvertFrom-Json -ErrorAction Stop
+  $readinessPeerSchema = Get-Content -Raw -LiteralPath (Join-Path $BundleRoot 'schemas\peer-snapshot-v1.schema.json') | ConvertFrom-Json -ErrorAction Stop
+  $readinessTerminalSchema = Get-Content -Raw -LiteralPath (Join-Path $BundleRoot 'schemas\terminal-lifecycle-v1.schema.json') | ConvertFrom-Json -ErrorAction Stop
+  if ([string]$readinessManifestSchema.'$defs'.pairId.pattern -ne '^readiness-pair-[a-f0-9]{24}$' -or
+      [string]$readinessPeerSchema.'$defs'.pairId.pattern -ne '^readiness-pair-[a-f0-9]{24}$' -or
+      [string]$readinessTerminalSchema.'$defs'.pairId.pattern -ne '^readiness-pair-[a-f0-9]{24}$' -or
+      [string]$readinessPeerSchema.properties.readinessPairId.'$ref' -ne '#/$defs/pairId' -or
+      [string]$readinessTerminalSchema.properties.readinessPairId.'$ref' -ne '#/$defs/pairId' -or
+      [string]$readinessPeerSchema.'$defs'.equipmentField.properties.value.'$ref' -ne '#/$defs/fingerprint') {
+    Add-Problem 'Readiness schemas must bind only derived pair IDs and bounded fingerprint/scalar values.'
+  }
+} catch {
+  Add-Problem "Invalid strict readiness schema contract: $($_.Exception.Message)"
+}
+
 $mainLuaPath = Join-Path $BundleRoot "Payload\Mods\CrabRuntimeProbe\Scripts\main.lua"
 $autoStartLuaPath = Join-Path $BundleRoot "Payload\Mods\CrabRuntimeProbe\Scripts\dashboard_autostart.lua"
 if ((Test-Path -LiteralPath $mainLuaPath -PathType Leaf) -and
@@ -370,10 +457,10 @@ if (Test-Path -LiteralPath $manifestPath) {
   try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json } catch { Add-Problem "Invalid version-manifest.json: $($_.Exception.Message)" }
   if ($null -ne $manifest) {
     if ($manifest.schemaVersion -ne 1 -or [string]$manifest.product -ne 'CrabRuntimeProbe' -or
-        [string]$manifest.version -notmatch '^1\.0\.4(?:[-+][0-9A-Za-z.-]+)?$' -or
+        [string]$manifest.version -notmatch '^1\.1\.0(?:[-+][0-9A-Za-z.-]+)?$' -or
         [string]$manifest.runtime -ne 'win-x64' -or
         [string]::IsNullOrWhiteSpace([string]$manifest.commit)) {
-      Add-Problem 'Version manifest must identify CrabRuntimeProbe v1.0.4, win-x64, schema 1, and a source commit.'
+      Add-Problem 'Version manifest must identify CrabRuntimeProbe v1.1.0, win-x64, schema 1, and a source commit.'
     }
     $expectedBundleName = "CrabRuntimeProbe-v$($manifest.version)-$($manifest.runtime)"
     if ((Split-Path -Leaf $BundleRoot) -ne $expectedBundleName) {
@@ -408,6 +495,11 @@ if (Test-Path -LiteralPath $manifestPath) {
       }
       if ([string]$manifest.schemaIdentities.$identityProperty -ne $entry.Value) {
         Add-Problem "Version manifest schema identity missing or wrong: $identityProperty=$($entry.Value)"
+      }
+    }
+    foreach ($entry in $readinessSchemaIdentities) {
+      if ([string]$manifest.schemaIdentities.($entry.ManifestProperty) -ne [string]$entry.Identity) {
+        Add-Problem "Version manifest schema identity missing or wrong: $($entry.ManifestProperty)=$($entry.Identity)"
       }
     }
     if ($manifest.releaseSafety.normalPlayGuideHookFree -ne $true -or

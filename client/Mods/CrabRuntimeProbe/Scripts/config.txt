@@ -35,6 +35,22 @@ allowInventoryArrayShapeConfirmProbes = false
 allowInventoryUserdataIntrospectionProbes = false
 allowInventoryArrayCountProbes = false
 allowInventoryElementDataAssetReadProbes = false
+
+# Explicit paired read-only readiness profile.  These stay disabled by
+# default; the dashboard writes all campaign identity fields for a real run.
+campaignProfile = normal-play-guide
+readinessCampaignEnabled = false
+readinessPairId = unassigned
+readinessManifestId = unassigned
+readinessEnabledChannels =
+readinessPeerSnapshotsEnabled = false
+readinessMaxPeers = 4
+readinessHealthIntervalSeconds = 1
+readinessScalarIntervalSeconds = 1
+readinessUnchangedHeartbeatSeconds = 30
+readinessTerminalSnapshotEnabled = true
+readinessInventoryStage = disabled
+
 fullObserveEnabled = false
 snapshotSamplerEnabled = false
 snapshotSampleIntervalSeconds = 3

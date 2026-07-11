@@ -4,6 +4,52 @@ All notable CrabRuntimeProbe changes are recorded here. RuntimeProbe remains a
 read-only research tool; a release entry never implies CrabSync write/apply
 safety.
 
+## [1.1.0] - 2026-07-11
+
+### Added
+
+- **CrabSync Readiness Campaign** preparation for one host and one joined
+  client. The dashboard creates a local opaque pair identifier from a short
+  human-entered correlation code; the code itself is never written to runtime
+  status, evidence, manifests, exports, or package metadata.
+- Closed readiness contracts for the campaign manifest, bounded peer-snapshot
+  records, and terminal lifecycle records. Canonical and UE4SS release
+  manifests identify all three contracts and require both readiness Lua
+  modules.
+- A bounded, read-only local PlayerState scalar/lifecycle capture path with
+  explicit final lifecycle evidence before a normal dashboard stop or stable
+  scope reset.
+- Dashboard readiness status/reporting that keeps each gate explicit: local
+  scalar evidence may progress, while remote visibility, inventory item proof,
+  transport/carrier behavior, and write/apply behavior remain unresolved.
+- Session-scoped evidence handling that treats unrelated legacy artifacts as
+  neutral omissions instead of contaminating a fresh campaign, while retaining
+  malformed or unsafe current-session evidence as a hard failure.
+
+### Safety and field-test limits
+
+- The readiness profile is opt-in and ships disabled. It is hook-free,
+  runtime-discovery-free, deep-inventory-free, write-free, RPC-free, and does
+  not add sockets, relays, listeners, or any CrabSync transport.
+- v1.1.0 does **not** enumerate remote PlayerState objects. Peer snapshots are
+  local-only until a separate reviewed runtime collection mechanism is proven
+  safe. Offline bundle pairing proves that two local sessions used the same
+  opaque pair identifier; it does not prove remote replication visibility.
+- Inventory traversal is disabled, including shallow array/count paths. There
+  is no item-level proof, shared inventory logic, gameplay synchronization, or
+  apply implementation in this release.
+- A terminal lifecycle record can improve crash triage when it is written
+  before the process exits, but it cannot establish crash causation or recover
+  a record that a hard crash prevented from being written.
+
+### Release packaging
+
+- Dashboard assembly, file, product, package, and manifest versions are
+  1.1.0.
+- Canonical and UE4SS verifiers require the readiness modules and schemas,
+  reject unsafe readiness defaults, and preserve the empty-trust/no-prearmed-
+  canary progressive v1.0.4 baseline.
+
 ## [1.0.4] - 2026-07-11
 
 ### Added

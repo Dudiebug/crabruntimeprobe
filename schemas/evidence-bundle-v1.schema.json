@@ -30,7 +30,7 @@
     "bundleFormat": { "const": "crabruntimeprobe-evidence-bundle-v1" },
     "campaignId": { "type": "string", "minLength": 1 },
     "campaignName": { "type": "string", "minLength": 1 },
-    "profileId": { "enum": ["crabsync-full-observe", "progressive-broad-observation"] },
+    "profileId": { "enum": ["crabsync-full-observe", "crabsync-readiness-campaign", "progressive-broad-observation"] },
     "campaignGeneration": { "type": "integer", "minimum": 1 },
     "machineId": { "type": "string", "minLength": 1 },
     "sessionId": { "type": "string", "minLength": 1 },
@@ -143,6 +143,29 @@
               "controlledResearchHooks": { "const": true },
               "compatibilityValidated": { "const": true },
               "trustedDepthEnforced": { "const": true }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "profileId": { "const": "crabsync-readiness-campaign" } } },
+      "then": {
+        "properties": {
+          "safety": {
+            "properties": {
+              "writesDisabled": { "const": true },
+              "rpcCallsDisabled": { "const": true },
+              "mutationDisabled": { "const": true },
+              "rawIdentityDisabled": { "const": true },
+              "hudHookDisabled": { "const": true },
+              "hooksDisabled": { "const": true },
+              "runtimeDiscoveryDisabled": { "const": true },
+              "inventoryStagesDisabled": { "const": true },
+              "controlledResearchHooks": { "const": false },
+              "compatibilityValidated": { "const": false },
+              "trustedDepthEnforced": { "const": false },
+              "activeCanaries": { "const": 0 }
             }
           }
         }

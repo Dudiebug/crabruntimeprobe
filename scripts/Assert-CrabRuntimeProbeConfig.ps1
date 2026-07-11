@@ -14,9 +14,11 @@ $script:CrabRuntimeProbeRequiredModFiles = @(
   "Scripts\campaign_state.lua",
   "Scripts\status_writer.lua",
   "Scripts\snapshot_sampler.lua",
+  "Scripts\peer_sampler.lua",
   "Scripts\passive_hook_manager.lua",
   "Scripts\inventory_stage_manager.lua",
   "Scripts\full_observe_coordinator.lua",
+  "Scripts\readiness_observe_coordinator.lua",
   "Scripts\crabsync_catalog.lua",
   "Scripts\research_hook_catalog.lua",
   "Scripts\progressive_json_reader.lua",
@@ -64,6 +66,18 @@ $script:CrabRuntimeProbeRequiredConfigDefaults = [ordered]@{
   allowInventoryUserdataIntrospectionProbes = "false"
   allowInventoryArrayCountProbes = "false"
   allowInventoryElementDataAssetReadProbes = "false"
+  campaignProfile = "normal-play-guide"
+  readinessCampaignEnabled = "false"
+  readinessPairId = "unassigned"
+  readinessManifestId = "unassigned"
+  readinessEnabledChannels = ""
+  readinessPeerSnapshotsEnabled = "false"
+  readinessMaxPeers = "4"
+  readinessHealthIntervalSeconds = "1"
+  readinessScalarIntervalSeconds = "1"
+  readinessUnchangedHeartbeatSeconds = "30"
+  readinessTerminalSnapshotEnabled = "true"
+  readinessInventoryStage = "disabled"
   snapshotSamplerEnabled = "false"
   fullObserveEnabled = "false"
   allowPassiveObservationHooks = "false"
@@ -470,6 +484,100 @@ function Assert-CrabRuntimeProbeNormalSamplerSafety {
   }
 }
 
+function Assert-CrabRuntimeProbeReadinessSamplerSafety {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScriptsRoot,
+    [string]$Label = 'readiness sampler'
+  )
+
+  if (-not (Test-Path -LiteralPath $ScriptsRoot -PathType Container)) {
+    throw "Readiness Lua scripts directory is missing: $ScriptsRoot"
+  }
+
+  $peerPath = Join-Path $ScriptsRoot 'peer_sampler.lua'
+  $coordinatorPath = Join-Path $ScriptsRoot 'readiness_observe_coordinator.lua'
+  foreach ($path in @($peerPath, $coordinatorPath)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+      throw "Missing required $Label module: $path"
+    }
+  }
+
+  $peer = Get-Content -Raw -LiteralPath $peerPath
+  $coordinator = Get-Content -Raw -LiteralPath $coordinatorPath
+  $readinessSources = "`n-- peer_sampler.lua`n$peer`n-- readiness_observe_coordinator.lua`n$coordinator"
+
+  if ($peer -notmatch 'require\s*\(\s*[''\"]snapshot_sampler[''\"]\s*\)') {
+    throw "$Label peer sampler must reuse the reviewed snapshot sampler."
+  }
+  if ($coordinator -notmatch 'require\s*\(\s*[''\"]full_observe_coordinator[''\"]\s*\)' -or
+      $coordinator -notmatch 'require\s*\(\s*[''\"]peer_sampler[''\"]\s*\)') {
+    throw "$Label coordinator must combine the reviewed scalar baseline with the bounded peer sampler."
+  }
+  if ($coordinator -notmatch [regex]::Escape("readinessInventoryStage or 'disabled'")) {
+    throw "$Label coordinator must explicitly reject every non-disabled inventory stage."
+  }
+
+  $forbidden = [ordered]@{
+    '(?<![A-Za-z0-9_])RegisterHook\s*\(' = 'gameplay/native RegisterHook call'
+    '(?<![A-Za-z0-9_])UnregisterHook\s*\(' = 'gameplay/native UnregisterHook call'
+    '(?<![A-Za-z0-9_])RegisterBeginPlay(?:Pre|Post)?Hook\s*\(' = 'global BeginPlay lifecycle hook'
+    '(?<![A-Za-z0-9_])RegisterLoadMap(?:Pre|Post)?Hook\s*\(' = 'global map lifecycle hook'
+    '(?<![A-Za-z0-9_])RegisterInitGameState(?:Pre|Post)?Hook\s*\(' = 'global GameState lifecycle hook'
+    '(?<![A-Za-z0-9_])ForEachFunction\s*\(' = 'runtime UFunction reflection'
+    '(?<![A-Za-z0-9_])ForEachUObject\s*\(' = 'arbitrary UObject crawl'
+    '(?<![A-Za-z0-9_])NotifyOnNewObject\s*\(' = 'runtime object discovery callback'
+    '(?<![A-Za-z0-9_])FindAllOf\s*\(' = 'runtime class instance enumeration'
+    '(?i)(?:\.|:)\s*findAll\s*\(' = 'runtime class instance enumeration helper'
+    '(?i)\b(?:runtimeDiscover(?:y|Candidates)?|discoverRuntimeCandidates|runRuntimeDiscovery)\s*\(' = 'runtime discovery execution'
+    '(?i)\b(?:dofile|loadfile|loadstring)\s*\(' = 'dynamic Lua code/module loading'
+    '(?i)\brequire\s*\((?!\s*[''\"])' = 'dynamic Lua module loading'
+    '(?i)\bpcall\s*\(\s*require\s*,(?!\s*[''\"])' = 'dynamic protected Lua module loading'
+    'require\s*\(\s*[''\"]passive_hook_manager[''\"]\s*\)' = 'passive hook manager import'
+    'require\s*\(\s*[''\"]inventory_stage_manager[''\"]\s*\)' = 'inventory stage manager import'
+    'require\s*\(\s*[''\"]progressive_observe_coordinator[''\"]\s*\)' = 'progressive hook coordinator import'
+  }
+  foreach ($entry in $forbidden.GetEnumerator()) {
+    if ($readinessSources -match $entry.Key) {
+      throw "Unsafe $Label path contains $($entry.Value): $($entry.Key)"
+    }
+  }
+
+  foreach ($inventoryProperty in @('WeaponMods', 'AbilityMods', 'MeleeMods', 'Perks', 'Relics', 'InventoryInfo')) {
+    if ($peer -match ("\b" + [regex]::Escape($inventoryProperty) + '\b')) {
+      throw "$Label peer sampler may not access crash-suspect inventory property '$inventoryProperty'."
+    }
+  }
+  if ($peer -match '(?i)\bgetArrayLength\s*\(') {
+    throw "$Label peer sampler may not count inventory wrappers with getArrayLength."
+  }
+  foreach ($requiredSafetyField in @(
+    'writesDisabled',
+    'rpcCallsDisabled',
+    'mutationDisabled',
+    'hooksDisabled',
+    'runtimeDiscoveryDisabled',
+    'inventoryStagesDisabled',
+    'rawIdentityDisabled'
+  )) {
+    if ($readinessSources -notmatch ("\b" + [regex]::Escape($requiredSafetyField) + '\s*=\s*true')) {
+      throw "$Label must emit the safety field '$requiredSafetyField' as true."
+    }
+  }
+
+  $mainPath = Join-Path $ScriptsRoot 'main.lua'
+  if (Test-Path -LiteralPath $mainPath -PathType Leaf) {
+    $main = Get-Content -Raw -LiteralPath $mainPath
+    if ($main -notmatch 'pcall\s*\(\s*require\s*,\s*[''\"]readiness_observe_coordinator[''\"]\s*\)') {
+      throw "$Label entrypoint must load readiness_observe_coordinator through a protected literal import."
+    }
+    foreach ($defaultGate in @('readinessCampaignEnabled', 'readinessPeerSnapshotsEnabled')) {
+      if ($main -notmatch ("\b" + [regex]::Escape($defaultGate) + '\s*=\s*false')) {
+        throw "$Label entrypoint must default $defaultGate=false."
+      }
+    }
+  }
+}
+
 function Assert-CrabRuntimeProbeSnapshotObservationSchema {
   param(
     [Parameter(Mandatory = $true)][string]$SchemaPath,
@@ -564,6 +672,16 @@ function Assert-CrabRuntimeProbeSnapshotObservationSchema {
       $profileContract.then.properties.safety.properties.hooksDisabled.const -ne $false -or
       $profileContract.else.properties.safety.properties.hooksDisabled.const -ne $true) {
     throw "$Label must require hooksDisabled=false only for explicitly discriminated progressive rows and true otherwise."
+  }
+  $readinessContract = @($schema.allOf | Where-Object {
+    [string]$_.'if'.properties.observationProfile.const -eq 'crabsync-readiness-campaign'
+  }) | Select-Object -First 1
+  $readinessCategories = @($readinessContract.then.properties.category.enum)
+  if ($null -eq $readinessContract -or
+      $readinessContract.then.properties.safety.properties.hooksDisabled.const -ne $true -or
+      $readinessCategories.Count -ne 4 -or
+      @($readinessCategories | Where-Object { $_ -notin @('health', 'crystals', 'slots', 'equipment') }).Count -ne 0) {
+    throw "$Label must restrict readiness rows to hook-free reviewed scalar categories."
   }
 }
 

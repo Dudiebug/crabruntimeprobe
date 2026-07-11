@@ -20,13 +20,20 @@ public sealed class SnapshotEvidenceService
         _reducer = reducer ?? new SnapshotEvidenceReducer(reader: _reader);
     }
 
+    public Task<SnapshotEvidenceLoadResult> LoadAsync(
+        LocalCampaignState campaign,
+        CancellationToken cancellationToken = default) =>
+        LoadAsync(campaign, SnapshotReplayScope.FromCampaign(campaign), cancellationToken);
+
     public async Task<SnapshotEvidenceLoadResult> LoadAsync(
         LocalCampaignState campaign,
+        SnapshotReplayScope scope,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(campaign);
+        ArgumentNullException.ThrowIfNull(scope);
         var files = LocateFiles(campaign.StatusDirectory, campaign.SessionId);
-        var version = FileVersion(files);
+        var version = FileVersion(files, scope);
         if (_cachedResult is not null && version.Equals(_cachedVersion, StringComparison.Ordinal))
             return _cachedResult;
         if (files.Count == 0)
@@ -59,6 +66,12 @@ public sealed class SnapshotEvidenceService
             {
                 physicalLine++;
                 if (string.IsNullOrWhiteSpace(line)) continue;
+                if (ClassifyScope(line, scope) == EvidenceLineScope.Foreign)
+                {
+                    // A prior session/generation/profile may remain in an append-only file.
+                    // It is outside this replay, not malformed evidence for the active run.
+                    continue;
+                }
                 var recordType = RecordType(line);
                 if (!dedicatedSnapshotFile && recordType is null)
                 {
@@ -117,7 +130,7 @@ public sealed class SnapshotEvidenceService
             .ToArray();
         var parsed = new SnapshotJsonlReadResult(ordered, rejections, snapshotLineCount);
         var result = new SnapshotEvidenceLoadResult(
-            _reducer.Replay(parsed, SnapshotReplayScope.FromCampaign(campaign)),
+            _reducer.Replay(parsed, scope),
             files);
         _cachedVersion = version;
         _cachedResult = result;
@@ -125,18 +138,21 @@ public sealed class SnapshotEvidenceService
     }
 
     /// <summary>
-    /// Overlays only clean snapshot-derived evidence. Dirty/stale/mismatched live status remains untouched.
+    /// Overlays only clean snapshot-derived evidence. A caller may explicitly allow a
+    /// clean, terminal stale status after proving the persisted snapshot scope.
     /// </summary>
     public LiveStatusReadResult Merge(
         LiveStatusReadResult status,
         SnapshotReplayResult replay,
-        SnapshotReplayScope scope)
+        SnapshotReplayScope scope,
+        bool allowExpectedTerminalStale = false)
     {
         ArgumentNullException.ThrowIfNull(status);
         ArgumentNullException.ThrowIfNull(replay);
         ArgumentNullException.ThrowIfNull(scope);
         if (replay.Rejections.Count > 0
-            || !status.HasSnapshot || status.Cleanliness != EvidenceCleanliness.Clean
+            || !status.HasSnapshot || status.Snapshot.DirtyEvidence || status.Snapshot.CrashSuspected
+            || status.UsedLastGood || (status.IsStale && !allowExpectedTerminalStale)
             || !status.Snapshot.Safety.AllRequiredSafe
             || !status.Snapshot.SessionId.Equals(scope.SessionId, StringComparison.Ordinal)
             || status.Snapshot.CampaignGeneration != scope.CampaignGeneration
@@ -144,7 +160,10 @@ public sealed class SnapshotEvidenceService
             || (!string.IsNullOrWhiteSpace(scope.MachineId)
                 && !status.Snapshot.MachineId.Equals(scope.MachineId, StringComparison.Ordinal))
             || (!string.IsNullOrWhiteSpace(scope.CampaignId)
-                && !status.Snapshot.CampaignId.Equals(scope.CampaignId, StringComparison.Ordinal)))
+                && !status.Snapshot.CampaignId.Equals(scope.CampaignId, StringComparison.Ordinal))
+            || !StatusObservationProfile(status.Snapshot).Equals(
+                scope.NormalizedObservationProfile,
+                StringComparison.Ordinal))
             return status;
 
         var merged = new Dictionary<string, ChecklistEvidence>(
@@ -215,13 +234,70 @@ public sealed class SnapshotEvidenceService
         }
     }
 
-    private static string FileVersion(IReadOnlyList<string> files) => string.Join(
-        "|",
-        files.Select(path =>
+    private static string FileVersion(IReadOnlyList<string> files, SnapshotReplayScope scope) =>
+        $"{scope.CampaignId}:{scope.SessionId}:{scope.CampaignGeneration}:{scope.MachineId}:{scope.SelectedRole}:"
+        + $"{scope.ObservedRole}:{scope.NormalizedObservationProfile}|" + string.Join(
+            "|",
+            files.Select(path =>
+            {
+                var info = new FileInfo(path);
+                return $"{Path.GetFullPath(path)}:{info.Length}:{info.LastWriteTimeUtc.Ticks}";
+            }));
+
+    private static EvidenceLineScope ClassifyScope(string line, SnapshotReplayScope scope)
+    {
+        try
         {
-            var info = new FileInfo(path);
-            return $"{Path.GetFullPath(path)}:{info.Length}:{info.LastWriteTimeUtc.Ticks}";
-        }));
+            using var document = JsonDocument.Parse(line);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return EvidenceLineScope.Active;
+
+            if (TryText(root, "sessionId", out var sessionId)
+                && !sessionId.Equals(scope.SessionId, StringComparison.Ordinal))
+                return EvidenceLineScope.Foreign;
+            if (TryInt64(root, "campaignGeneration", out var generation)
+                && generation != scope.CampaignGeneration)
+                return EvidenceLineScope.Foreign;
+            if (TryText(root, "observationProfile", out var profile)
+                && ObservationProfileIds.IsKnown(profile)
+                && !ObservationProfileIds.Normalize(profile).Equals(
+                    scope.NormalizedObservationProfile,
+                    StringComparison.Ordinal))
+                return EvidenceLineScope.Foreign;
+        }
+        catch (JsonException)
+        {
+            // The active-file caller turns unscoped malformed input into a rejection.
+        }
+
+        return EvidenceLineScope.Active;
+    }
+
+    private static string StatusObservationProfile(LiveStatusSnapshot snapshot) =>
+        ObservationProfileIds.Normalize(!string.IsNullOrWhiteSpace(snapshot.Runtime.ActiveProfile)
+            ? snapshot.Runtime.ActiveProfile
+            : snapshot.CampaignId);
+
+    private static bool TryText(JsonElement element, string name, out string value)
+    {
+        value = string.Empty;
+        if (!element.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.String)
+            return false;
+        value = property.GetString() ?? string.Empty;
+        return !string.IsNullOrWhiteSpace(value);
+    }
+
+    private static bool TryInt64(JsonElement element, string name, out long value)
+    {
+        value = 0;
+        return element.TryGetProperty(name, out var property) && property.TryGetInt64(out value);
+    }
+
+    private enum EvidenceLineScope
+    {
+        Active,
+        Foreign
+    }
 
     private static string Signature(SnapshotObservation observation)
     {

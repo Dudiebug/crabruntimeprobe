@@ -79,7 +79,7 @@ function builder.fullObserveBase(config, campaignState, eventName)
     event = eventName,
     probeId = eventName,
     probeName = eventName,
-    probeSet = 'crabsync-full-observe',
+    probeSet = tostring(config.probeSet or 'crabsync-full-observe'),
     mode = tostring(config.mode or 'observe'),
     category = 'full-observe',
     campaignId = tostring(config.campaignId or ''),

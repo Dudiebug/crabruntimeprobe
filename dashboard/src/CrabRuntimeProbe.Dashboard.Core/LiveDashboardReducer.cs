@@ -37,6 +37,16 @@ public static class NormalObservationCapabilities
                 + "It cannot prove exact callbacks, pickup identity, inventory counts, persistence, or RPC activity.");
         }
 
+        if (ReadinessCampaignContracts.IsReadinessProfile(normalized))
+        {
+            return new ObservationCapabilityProfile(
+                ReadinessCampaignContracts.ProfileId,
+                HookFreeSnapshotChecklistIds,
+                "This paired, read-only profile captures bounded local scalar snapshots and lifecycle evidence while "
+                + "remote PlayerState discovery and inventory collection remain deferred. It cannot prove callbacks, "
+                + "item identity, metadata, enhancements, persistence, remote authority, or any write/apply behavior.");
+        }
+
         return new ObservationCapabilityProfile(
             normalized.Length == 0 ? "unknown" : normalized,
             None,
@@ -87,9 +97,12 @@ public sealed class LiveDashboardReducer
                       || snapshot.Runtime.StopRequested
                       || IsOneOf(snapshot.Runtime.RuntimeProbeState, "stopped", "stop-requested", "complete", "completed");
         var safetyProven = snapshot.Safety.IsSafeForProfile(profile);
+        var readinessExpected = ReadinessCampaignContracts.IsReadinessProfile(profile);
+        var readinessContractValid = !readinessExpected || snapshot.Readiness?.HasValidContract == true;
         var faulted = snapshot.CrashSuspected
                       || snapshot.DirtyEvidence
                       || !safetyProven
+                      || !readinessContractValid
                       || ContainsFault(snapshot.Runtime.RuntimeProbeState)
                       || ContainsFault(snapshot.EvidenceHealth.State)
                       || clockSkew;
@@ -111,7 +124,7 @@ public sealed class LiveDashboardReducer
         return new LiveDashboardStatus(
             state,
             StateText(state),
-            Detail(state, status, snapshot, category, clockSkew),
+            Detail(state, status, snapshot, category, clockSkew, profile, readinessContractValid),
             heartbeatAge,
             $"{FormatAge(heartbeatAge)} ago",
             snapshot.Sequence,
@@ -120,12 +133,13 @@ public sealed class LiveDashboardReducer
             profile,
             category,
             string.IsNullOrWhiteSpace(category) ? "Not sampling" : FriendlyCategory(category),
-            ReadinessText(state, snapshot),
+            ReadinessText(state, snapshot, profile, readinessContractValid),
             ready,
             fresh,
             safetyProven,
             clockSkew,
-            capabilities);
+            capabilities,
+            snapshot.Readiness);
     }
 
     private static string StateText(LiveCollectionState state) => state switch
@@ -146,7 +160,9 @@ public sealed class LiveDashboardReducer
         LiveStatusReadResult status,
         LiveStatusSnapshot snapshot,
         string category,
-        bool clockSkew) => state switch
+        bool clockSkew,
+        string profile,
+        bool readinessContractValid) => state switch
     {
         LiveCollectionState.GameUnavailable =>
             "No running game is visible. The last completed status is retained for diagnostics only.",
@@ -163,8 +179,10 @@ public sealed class LiveDashboardReducer
             "RuntimeProbe reported a clean stop; no new heartbeat is expected for this run.",
         LiveCollectionState.Faulted when clockSkew =>
             "The heartbeat timestamp is too far in the future, so freshness cannot be proven.",
-        LiveCollectionState.Faulted when !snapshot.Safety.AllRequiredSafe =>
-            "The live snapshot does not prove the complete hook-free normal-mode safety contract.",
+        LiveCollectionState.Faulted when !readinessContractValid =>
+            "The readiness profile did not publish a complete bounded pairing/status contract, so collection is blocked.",
+        LiveCollectionState.Faulted when !snapshot.Safety.IsSafeForProfile(profile) =>
+            "The live snapshot does not prove the required read-only safety contract for this profile.",
         LiveCollectionState.Faulted when snapshot.CrashSuspected =>
             "RuntimeProbe marked this run crash-suspect; collection is not considered healthy.",
         LiveCollectionState.Faulted => string.IsNullOrWhiteSpace(status.Error)
@@ -173,20 +191,38 @@ public sealed class LiveDashboardReducer
         _ => "Runtime status is unavailable."
     };
 
-    private static string ReadinessText(LiveCollectionState state, LiveStatusSnapshot snapshot) => state switch
+    private static string ReadinessText(
+        LiveCollectionState state,
+        LiveStatusSnapshot snapshot,
+        string profile,
+        bool readinessContractValid)
     {
-        LiveCollectionState.GameUnavailable => "Not ready",
-        LiveCollectionState.Warming => snapshot.Lifecycle.StableSamplesRequired > 0
-            ? $"{snapshot.Lifecycle.StableSamples}/{snapshot.Lifecycle.StableSamplesRequired} stable samples"
-            : "Stability barrier pending",
-        LiveCollectionState.Stable => "Stable; checks pending",
-        LiveCollectionState.Ready => "Ready for collection",
-        LiveCollectionState.Collecting => "Collection active",
-        LiveCollectionState.Stale => "Writer stale",
-        LiveCollectionState.Stopped => "Collection stopped",
-        LiveCollectionState.Faulted => "Collection blocked",
-        _ => "Not ready"
-    };
+        if (ReadinessCampaignContracts.IsReadinessProfile(profile))
+        {
+            if (!readinessContractValid) return "Readiness contract missing";
+            var readiness = snapshot.Readiness!;
+            var stage = ReadinessCampaignContracts.IsDeferredInventoryStage(readiness.InventoryStage)
+                ? "Inventory deferred"
+                : "Inventory contract invalid";
+            var readinessState = string.IsNullOrWhiteSpace(readiness.StageState) ? "pending" : readiness.StageState;
+            return $"{stage} - {readinessState}";
+        }
+
+        return state switch
+        {
+            LiveCollectionState.GameUnavailable => "Not ready",
+            LiveCollectionState.Warming => snapshot.Lifecycle.StableSamplesRequired > 0
+                ? $"{snapshot.Lifecycle.StableSamples}/{snapshot.Lifecycle.StableSamplesRequired} stable samples"
+                : "Stability barrier pending",
+            LiveCollectionState.Stable => "Stable; checks pending",
+            LiveCollectionState.Ready => "Ready for collection",
+            LiveCollectionState.Collecting => "Collection active",
+            LiveCollectionState.Stale => "Writer stale",
+            LiveCollectionState.Stopped => "Collection stopped",
+            LiveCollectionState.Faulted => "Collection blocked",
+            _ => "Not ready"
+        };
+    }
 
     private static string StabilityProgress(LifecycleInfo lifecycle)
     {
@@ -236,6 +272,8 @@ public sealed class LiveDashboardReducer
         "slots" => "Inventory slots",
         "equipment" => "Equipment",
         "inventory" or "inventory-counts" => "Inventory counts",
+        "peer-snapshots" or "peer-snapshot" => "Peer snapshots",
+        "player-roster" => "Player roster",
         "lifecycle" => "Lifecycle",
         _ => CultureInfo.InvariantCulture.TextInfo.ToTitleCase(category.Replace('-', ' '))
     };

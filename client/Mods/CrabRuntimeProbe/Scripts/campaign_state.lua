@@ -106,7 +106,31 @@ local function addUnique(list, value)
   list[#list + 1] = value
 end
 
+local function configuredProfile(config)
+  config = config or {}
+  if config.progressiveObservationEnabled == true then
+    return 'progressive-broad-observation'
+  end
+  if config.readinessCampaignEnabled == true
+    and tostring(config.campaignProfile or '') == 'crabsync-readiness-campaign' then
+    return 'crabsync-readiness-campaign'
+  end
+  return 'normal-play-guide'
+end
+
+local function derivedReadinessPairId(value)
+  local text = tostring(value or '')
+  local suffix = text:match('^readiness%-pair%-(.*)$')
+  return suffix ~= nil and #suffix == 24 and suffix:match('^[0-9a-f]+$') ~= nil and text or ''
+end
+
+local function readinessManifestId(value)
+  local text = tostring(value or '')
+  return #text >= 8 and #text <= 128 and text:match('^readiness%-manifest%-%w[%w_%-]*$') ~= nil and text or ''
+end
+
 function campaignState.new(sessionId, config, catalog)
+  local profile = configuredProfile(config)
   local state = {
     sessionId = tostring(sessionId or ''),
     config = config or {},
@@ -125,8 +149,8 @@ function campaignState.new(sessionId, config, catalog)
     stoppedAt = '',
     stopRequested = false,
     probeStage = 'startup',
-    workflow = (config or {}).progressiveObservationEnabled == true and 'progressive-broad-observation' or 'normal-play-guide',
-    activeProfile = (config or {}).progressiveObservationEnabled == true and 'progressive-broad-observation' or 'normal-play-guide',
+    workflow = profile,
+    activeProfile = profile,
     currentSamplingCategory = '',
     collectionReadiness = 'warming',
     inventoryDepth = 0,
@@ -138,6 +162,34 @@ function campaignState.new(sessionId, config, catalog)
     hookRegistration = {},
     circuitBreakers = {},
     inventoryStages = {},
+    readiness = {
+      enabled = profile == 'crabsync-readiness-campaign',
+      pairId = profile == 'crabsync-readiness-campaign' and derivedReadinessPairId((config or {}).readinessPairId) or '',
+      manifestId = profile == 'crabsync-readiness-campaign' and readinessManifestId((config or {}).readinessManifestId) or '',
+      inventoryStage = tostring((config or {}).readinessInventoryStage or 'disabled'),
+      stageState = profile == 'crabsync-readiness-campaign' and 'warming' or 'not-enabled',
+      enabledChannels = tostring((config or {}).readinessEnabledChannels or ''),
+      safeReadChannelsReady = false,
+      visiblePlayerCount = 0,
+      stablePlayerCount = 0,
+      peerSnapshotCount = 0,
+      inventoryCategoryCount = 0,
+      maxPeers = math.max(1, math.min(4, math.floor(tonumber((config or {}).readinessMaxPeers) or 4))),
+      maxInventoryItems = 0,
+      maxEnhancements = 0,
+      detail = profile == 'crabsync-readiness-campaign'
+        and 'local scalar readiness foundation; remote visibility and inventory are deferred' or '',
+      lastResult = 'not-enabled',
+      lastChangeKind = '',
+      lastSampleAtUtc = '',
+      terminalLifecycle = {
+        emitted = false,
+        timestampUtc = '',
+        reason = '',
+        priorGeneration = 0,
+        nextGeneration = 0
+      }
+    },
     research = {
       runId = '',
       runType = '',
@@ -283,6 +335,47 @@ function campaignState.new(sessionId, config, catalog)
     if readiness ~= nil and readiness ~= '' then
       self.collectionReadiness = recordBuilder.cleanString(readiness, 64)
     end
+  end
+
+  function state:setPeerSamplingSummary(summary)
+    summary = type(summary) == 'table' and summary or {}
+    local current = self.readiness
+    current.peerSnapshotCount = math.max(0, math.floor(tonumber(summary.peerSnapshotCount) or current.peerSnapshotCount or 0))
+    current.visiblePlayerCount = math.max(0, math.min(4, math.floor(tonumber(summary.visiblePlayerCount) or 0)))
+    current.stablePlayerCount = math.max(0, math.min(4, math.floor(tonumber(summary.stablePlayerCount) or 0)))
+    current.lastResult = recordBuilder.cleanString(summary.lastResult or current.lastResult or 'unknown', 32)
+    current.lastChangeKind = recordBuilder.cleanString(summary.lastChangeKind or current.lastChangeKind or '', 32)
+    current.lastSampleAtUtc = recordBuilder.cleanString(summary.lastSampleAtUtc or current.lastSampleAtUtc or '', 64)
+    if summary.reason and summary.reason ~= '' then
+      current.detail = recordBuilder.cleanString(summary.reason, 240)
+    end
+  end
+
+  function state:peerSamplingSummary()
+    local current = self.readiness or {}
+    return {
+      peerSnapshotCount = math.max(0, math.floor(tonumber(current.peerSnapshotCount) or 0)),
+      visiblePlayerCount = math.max(0, math.min(4, math.floor(tonumber(current.visiblePlayerCount) or 0))),
+      stablePlayerCount = math.max(0, math.min(4, math.floor(tonumber(current.stablePlayerCount) or 0)))
+    }
+  end
+
+  function state:setReadinessStage(stageState, safeReadChannelsReady, detail)
+    local current = self.readiness
+    current.stageState = recordBuilder.cleanString(stageState or current.stageState or 'unavailable', 64)
+    if safeReadChannelsReady ~= nil then current.safeReadChannelsReady = safeReadChannelsReady == true end
+    if detail and detail ~= '' then current.detail = recordBuilder.cleanString(detail, 240) end
+  end
+
+  function state:markTerminalLifecycle(details)
+    details = type(details) == 'table' and details or {}
+    self.readiness.terminalLifecycle = {
+      emitted = true,
+      timestampUtc = recordBuilder.cleanString(details.timestampUtc or utcNow(), 64),
+      reason = recordBuilder.cleanString(details.reason or 'lifecycle-transition', 240),
+      priorGeneration = math.max(0, math.floor(tonumber(details.priorGeneration) or self.lifecycleGeneration or 0)),
+      nextGeneration = math.max(0, math.floor(tonumber(details.nextGeneration) or self.lifecycleGeneration or 0))
+    }
   end
 
   function state:setResearchSummary(summary)
@@ -503,6 +596,7 @@ function campaignState.new(sessionId, config, catalog)
         collectionReadiness = self.collectionReadiness,
         stability = self.stability,
         hookIo = self.hookIo,
+        readiness = self.readiness,
         research = self.research
       },
       catalog = {

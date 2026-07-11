@@ -313,6 +313,16 @@ public sealed class SnapshotEvidenceReducer
             return Reject(observation, "dirty-row", "Dirty or crash-suspect snapshots cannot contribute evidence.");
         if (!observation.Safety.IsReadOnlyAndHookFree)
             return Reject(observation, "unsafe-row", "Snapshot does not prove hook-free, read-only safety flags.");
+        if (!ObservationProfileIds.Normalize(observation.ObservationProfile).Equals(
+                scope.NormalizedObservationProfile,
+                StringComparison.Ordinal))
+            return Reject(observation, "profile-mismatch", "Snapshot observation profile does not match the active campaign profile.");
+        if (scope.NormalizedObservationProfile == ObservationProfileIds.ReadinessCampaign
+            && !ObservationProfileIds.IsReadinessReviewedCategory(observation.Category))
+        {
+            return Reject(observation, "readiness-category-blocked",
+                "Readiness replay rejects categories outside the reviewed local scalar contract.");
+        }
         if (string.IsNullOrWhiteSpace(observation.WorldFingerprint)
             || string.IsNullOrWhiteSpace(observation.PlayerStateFingerprint))
             return Reject(observation, "missing-stable-scope", "Stable snapshots require world and PlayerState fingerprints.");
