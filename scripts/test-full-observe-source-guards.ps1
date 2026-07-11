@@ -21,11 +21,18 @@ $configPath = Join-Path $luaRoot 'config.txt'
 
 Assert-CrabRuntimeProbeConfig -ConfigPath $configPath -Label 'source full-observe-safe config'
 Assert-CrabRuntimeProbeModLayout -ModRoot (Split-Path -Parent $luaRoot) -Label 'source full-observe mod'
+Assert-CrabRuntimeProbeSnapshotObservationSchema `
+  -SchemaPath (Join-Path $repoRoot 'schemas\snapshot-observation-v1.schema.json') `
+  -Label 'source snapshot observation schema'
+Assert-CrabRuntimeProbeNormalSamplerSafety `
+  -ScriptsRoot $luaRoot `
+  -Label 'source normal snapshot sampler'
 
 $newRuntimeFiles = @(
   'record_builder.lua',
   'campaign_state.lua',
   'status_writer.lua',
+  'snapshot_sampler.lua',
   'passive_hook_manager.lua',
   'inventory_stage_manager.lua',
   'full_observe_coordinator.lua'
@@ -49,7 +56,11 @@ foreach ($forbidden in @(
 }
 
 $main = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'main.lua')
-Assert-Contains $main "cfg\.fullObserveEnabled == true and cfg\.probeSet == 'crabsync-full-observe'" 'Coordinator must require both the explicit gate and exact profile.'
+Assert-Contains $main 'local snapshotCampaign = cfg\.fullObserveEnabled == true' 'Normal snapshot campaign must have an explicit main-path gate.'
+Assert-Contains $main 'cfg\.snapshotSamplerEnabled == true' 'Normal main path must require the snapshot sampler gate.'
+Assert-Contains $main "cfg\.probeSet == 'crabsync-full-observe'" 'Normal main path must require the exact profile.'
+Assert-Contains $main '(?s)if not snapshotCampaign then\s+local runner = require\(''probe_runner''\)' 'Legacy probe_runner must be unreachable in a normal snapshot campaign.'
+Assert-Contains $main 'if state then state:onTick\(\) end' 'Normal snapshot ticks must bypass the legacy probe runner.'
 Assert-Contains $main "validFullObserveIdentity\(cfg\)" 'Full observe must fail closed on the complete campaign identity contract.'
 foreach ($identityField in @('campaignId', 'campaignSessionId', 'machineId', 'selectedRole', 'campaignGeneration')) {
   Assert-Contains $main ("config\." + [regex]::Escape($identityField)) "Full observe identity validation is missing $identityField."
@@ -72,7 +83,9 @@ Assert-Contains $coordinator 'campaignIdentityValid\(self\.config\)' 'Coordinato
 Assert-NotContains $coordinator "registerLifecycleHook\('RegisterBeginPlayPostHook'" 'Global BeginPlay must remain intentionally unregistered.'
 
 $hookManager = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'passive_hook_manager.lua')
-Assert-Contains $hookManager "descriptor\.safetyClassification ~= 'passive-observation-only'" 'Every hook descriptor must pass the passive-only catalog classification gate.'
+Assert-Contains $hookManager "descriptor\.safetyClassification ~= 'passive-observation-only'" 'The unreachable legacy hook manager must reject disabled research descriptors.'
+Assert-NotContains (Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'crabsync_catalog.lua')) 'safetyClassification = "passive-observation-only"' 'Generated exact-call descriptors must not be classified as normal passive observers.'
+Assert-Contains (Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'crabsync_catalog.lua')) 'callPolicy = "disabled-do-not-register-or-invoke"' 'Generated exact-call descriptors must remain explicitly disabled.'
 Assert-Contains $hookManager 'REVIEWED_ENGINE_HOOKS' 'Engine hooks must be constrained by an explicit reviewed allowlist.'
 foreach ($enginePath in @(
   '/Script/Engine.GameStateBase:OnRep_ReplicatedHasBegunPlay',
@@ -93,6 +106,7 @@ foreach ($call in $findAllCalls) {
 }
 
 foreach ($key in @(
+  'snapshotSamplerEnabled',
   'fullObserveEnabled',
   'allowPassiveObservationHooks',
   'allowFullObserveInventoryStages',

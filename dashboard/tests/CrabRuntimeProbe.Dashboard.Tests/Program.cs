@@ -9,6 +9,8 @@ var tests = new (string Name, Func<Task> Body)[]
     ("status schema version and additive fields", StatusSchemaAsync),
     ("atomic ring partial-read fallback and parser update", RingFallbackAsync),
     ("stale heartbeat plus crash and dirty state", StaleCrashDirtyAsync),
+    ("hook-free snapshot replay qualification and rejection", SnapshotReplayAsync),
+    ("snapshot evidence file filtering and fail-closed merge", SnapshotEvidenceServiceAsync),
     ("data-driven checklist prerequisites and qualifying evidence", ChecklistAsync),
     ("friend-facing Play Guide projection, mapping, states, and filters", PlayGuideAsync),
     ("real exhaustive coverage catalog aliases and terminal states", CoverageCatalogAsync),
@@ -17,6 +19,7 @@ var tests = new (string Name, Func<Task> Body)[]
     ("game process handoff grace and confirmed exit", GameProcessExitDetectorAsync),
     ("identity redaction", RedactionAsync),
     ("byte-identical canonical collection and unsafe omission", CollectionAsync),
+    ("snapshot-qualified export and evidence-derived safety", SnapshotCollectionSafetyAsync),
     ("strict host-client correlation and tamper rejection", CorrelationAsync),
     ("resource locator packaged and repository modes", ResourceLocatorAsync),
     ("source guards, fixture, and demo", SourceGuardsAndFixturesAsync)
@@ -87,6 +90,172 @@ static async Task StaleCrashDirtyAsync()
     Require(result.IsStale, "stale heartbeat was accepted as fresh");
     Require(result.Cleanliness == EvidenceCleanliness.CrashSuspect, "crash must dominate dirty classification");
     Require(result.Snapshot.DirtyEvidence && result.Snapshot.CrashSuspected, "dirty/crash flags not parsed");
+}
+
+static Task SnapshotReplayAsync()
+{
+    const string session = "snapshot-session";
+    const string machine = "machine-test";
+    const long generation = 7;
+    var scope = new SnapshotReplayScope(
+        session,
+        generation,
+        "crabsync-full-observe",
+        CampaignRole.Host,
+        "host",
+        machine);
+    var reducer = new SnapshotEvidenceReducer();
+
+    var health = reducer.ReplayJsonl(
+        SnapshotDeltaJsonl("health", "currentHealth", 100m, 75m, session, generation, machine),
+        scope);
+    Require(health.Rejections.Count == 0 && health.Qualifications.Count == 1,
+        "clean stable health delta was not qualified exactly once");
+    Require(health.Checklist.TryGetValue("health-damage", out var damage)
+            && damage.QualifyingEvidence && damage.ObservationCount == 1
+            && health.Checklist.TryGetValue("health-current-change", out var current)
+            && current.QualifyingEvidence,
+        "health decrease did not project to the mapped player-facing checklist rows");
+
+    var crystals = reducer.ReplayJsonl(
+        SnapshotDeltaJsonl("crystals", "crystals", 10m, 25m, session, generation, machine),
+        scope);
+    Require(crystals.Checklist.TryGetValue("resource-crystal-gain", out var gain)
+            && gain.QualifyingEvidence,
+        "crystal increase rule did not qualify");
+
+    var slots = reducer.ReplayJsonl(
+        SnapshotDeltaJsonl("slots", "weaponModSlots", 8m, 9m, session, generation, machine),
+        scope);
+    Require(slots.Checklist.TryGetValue("slot-weapon-increment", out var slot)
+            && slot.QualifyingEvidence,
+        "slot increase rule did not qualify");
+
+    var equipment = reducer.ReplayJsonl(
+        SnapshotDeltaJsonl(
+            "equipment", "weaponFingerprint", "oldweapon", "newweapon",
+            session, generation, machine, fingerprint: true),
+        scope);
+    Require(equipment.Checklist.TryGetValue("transaction-equipment-change", out var equip)
+            && equip.QualifyingEvidence,
+        "redacted equipment fingerprint change did not qualify");
+
+    var unsafeJsonl = SnapshotDeltaJsonl(
+        "health", "currentHealth", 100m, 50m, session, generation, machine,
+        hooksDisabled: false);
+    var unsafeReplay = reducer.ReplayJsonl(unsafeJsonl, scope);
+    Require(unsafeReplay.Qualifications.Count == 0 && unsafeReplay.Checklist.Count == 0
+            && unsafeReplay.Rejections.Any(item => item.Code == "unsafe-row"),
+        "unsafe snapshot rows were not rejected fail-closed");
+
+    var dirtyReplay = reducer.ReplayJsonl(
+        SnapshotDeltaJsonl("health", "currentHealth", 100m, 50m, session, generation, machine,
+            dirtyEvidence: true),
+        scope);
+    Require(dirtyReplay.Qualifications.Count == 0
+            && dirtyReplay.Rejections.Any(item => item.Code == "dirty-row"),
+        "dirty snapshot evidence was allowed to qualify");
+
+    var wrongMachine = reducer.ReplayJsonl(
+        SnapshotDeltaJsonl("health", "currentHealth", 100m, 50m, session, generation, "other-machine"),
+        scope);
+    Require(wrongMachine.Qualifications.Count == 0
+            && wrongMachine.Rejections.Any(item => item.Code == "machine-mismatch"),
+        "wrong-machine snapshot evidence was allowed to qualify");
+
+    var malformed = reducer.ReplayJsonl(
+        SnapshotDeltaJsonl("health", "currentHealth", 100m, 50m, session, generation, machine)
+        + "\n{\"recordType\":\"snapshot-observation\"",
+        scope);
+    Require(malformed.Qualifications.Count == 0 && malformed.Checklist.Count == 0
+            && malformed.Rejections.Any(item => item.Code == "invalid-json"),
+        "a malformed tail was bridged around to invent a qualifying delta");
+
+    var insufficientStability = reducer.ReplayJsonl(
+        SnapshotDeltaJsonl("health", "currentHealth", 100m, 50m, session, generation, machine)
+            .Replace("\"sampleCount\":10", "\"sampleCount\":9", StringComparison.Ordinal),
+        scope);
+    Require(insufficientStability.Qualifications.Count == 0
+            && insufficientStability.Rejections.Any(item => item.Code == "unstable-row"),
+        "stable=true bypassed the required 10-sample barrier");
+
+    var missingDwell = reducer.ReplayJsonl(
+        SnapshotRow(1, "health", "currentHealth", 100m, session, generation, machine)
+            .Replace("\"dwellSeconds\":30,", string.Empty, StringComparison.Ordinal),
+        scope);
+    Require(missingDwell.Rejections.Any(item => item.Code == "invalid-stability"),
+        "missing stability dwellSeconds was accepted despite the strict schema");
+
+    var scopeChanged = string.Join('\n', Enumerable.Range(1, 3)
+        .Select(index => SnapshotRow(index, "health", "currentHealth", 100m, session, generation, machine,
+            worldFingerprint: "world-a"))
+        .Concat(Enumerable.Range(4, 3)
+            .Select(index => SnapshotRow(index, "health", "currentHealth", 50m, session, generation, machine,
+                worldFingerprint: "world-b"))));
+    var scopeReplay = reducer.ReplayJsonl(scopeChanged, scope);
+    Require(scopeReplay.Qualifications.Count == 0 && scopeReplay.Rejections.Count == 0,
+        "a normal world-scope transition was treated as a gameplay delta or corrupt evidence");
+    return Task.CompletedTask;
+}
+
+static async Task SnapshotEvidenceServiceAsync()
+{
+    using var temp = new TempDirectory();
+    const string session = "snapshot-session";
+    const string machine = "machine-test";
+    const long generation = 7;
+    var statusDirectory = Path.Combine(temp.Path, "Scripts", "results");
+    Directory.CreateDirectory(statusDirectory);
+    var accessPath = Path.Combine(statusDirectory, $"access_evidence_{session}.jsonl");
+    var generic = "{\"schemaVersion\":2,\"recordType\":\"coordinator-status\",\"result\":\"ok\"}";
+    await File.WriteAllTextAsync(
+        accessPath,
+        generic + "\n" + SnapshotDeltaJsonl(
+            "crystals", "crystals", 10m, 20m, session, generation, machine) + "\n");
+    await File.WriteAllTextAsync(
+        Path.Combine(statusDirectory, "snapshot_observations_old-session.jsonl"),
+        "{ malformed old session");
+    var campaign = new LocalCampaignState(
+        1,
+        "crabsync-full-observe",
+        "Snapshot Test",
+        generation,
+        session,
+        machine,
+        CampaignRole.Host,
+        temp.Path,
+        Path.Combine(temp.Path, "CrabChampions-Win64-Shipping.exe"),
+        statusDirectory,
+        "monitoring",
+        DateTimeOffset.UtcNow,
+        DateTimeOffset.UtcNow,
+        string.Empty);
+    var service = new SnapshotEvidenceService();
+    var loaded = await service.LoadAsync(campaign);
+    Require(loaded.Replay.InputRows == 6 && loaded.Replay.Rejections.Count == 0
+            && loaded.SourceFiles.All(path => !path.Contains("old-session", StringComparison.OrdinalIgnoreCase)),
+        "generic or foreign-session evidence was not ignored by the snapshot reader");
+
+    var statusSnapshot = new LiveStatusReader().Parse(
+        StatusJson(20, DateTimeOffset.UtcNow, generation, session));
+    var status = new LiveStatusReadResult(
+        statusSnapshot,
+        true,
+        false,
+        false,
+        string.Empty,
+        DateTimeOffset.UtcNow);
+    var merged = service.Merge(status, loaded.Replay, SnapshotReplayScope.FromCampaign(campaign));
+    Require(merged.Snapshot.Checklist.TryGetValue("resource-crystal-gain", out var evidence)
+            && evidence.QualifyingEvidence,
+        "clean snapshot evidence was not merged into live checklist status");
+
+    await File.AppendAllTextAsync(accessPath, "{\"recordType\":\"snapshot-observation\"");
+    var rejected = await service.LoadAsync(campaign);
+    var failClosed = service.Merge(status, rejected.Replay, SnapshotReplayScope.FromCampaign(campaign));
+    Require(rejected.Replay.Rejections.Count > 0
+            && !failClosed.Snapshot.Checklist.ContainsKey("resource-crystal-gain"),
+        "malformed snapshot tail was allowed to overlay checklist evidence");
 }
 
 static async Task ChecklistAsync()
@@ -315,7 +484,19 @@ static async Task PrepareAndResumeAsync()
                  "enabled = true", "tickDriver = executeDelay", "mode = observe",
                  "probeSet = crabsync-full-observe", "allowWriteProbes = false", "allowRpcProbes = false",
                  "allowHudTickHook = false", "allowRawIdentityEvidence = false",
-                 "fullObserveEnabled = true", "allowFullObserveRuntimeDiscovery = true"
+                 "fullObserveEnabled = true", "snapshotSamplerEnabled = true",
+                 "snapshotStableSamplesRequired = 10", "snapshotStableDwellSeconds = 30",
+                 "allowPassiveObservationHooks = false", "allowFullObserveInventoryStages = false",
+                 "allowFullObserveRuntimeDiscovery = false", "allowDeepArrayProbes = false",
+                 "allowInventoryInfoProbes = false", "allowHealthProbes = false",
+                 "allowIdentityProbes = false", "allowResourceVisibilityProbes = false",
+                 "allowCrystalsReadProbes = false", "allowSlotsReadProbes = false",
+                 "allowSafeScalarWatchProbes = false", "allowPerkDataAssetCatalogProbes = false",
+                 "allowMaxSafePlayRecorderProbes = false", "allowInventoryArrayShallowProbes = false",
+                 "allowInventoryArrayShapeConfirmProbes = false",
+                 "allowInventoryUserdataIntrospectionProbes = false",
+                 "allowInventoryArrayCountProbes = false",
+                 "allowInventoryElementDataAssetReadProbes = false"
              })
         Require(config.Contains(required, StringComparison.Ordinal), $"safe config missing {required}");
     Require(config.Contains($"campaignSessionId = {state.SessionId}", StringComparison.Ordinal),
@@ -333,8 +514,22 @@ static async Task PrepareAndResumeAsync()
         "prior live status/control markers were not archived");
     var request = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(status, "dashboard_campaign_request.json")));
     Require(request.RootElement.GetProperty("command").GetString() == "prepare", "prepare marker command mismatch");
+    var installedConfig = Path.Combine(game, "Mods", "CrabRuntimeProbe", "Scripts", "config.txt");
+    await File.WriteAllTextAsync(
+        installedConfig,
+        (await File.ReadAllTextAsync(installedConfig))
+        .Replace("snapshotSamplerEnabled = true", "snapshotSamplerEnabled = false", StringComparison.Ordinal)
+        .Replace("allowPassiveObservationHooks = false", "allowPassiveObservationHooks = true", StringComparison.Ordinal));
     var resumed = await service.ResumeAsync();
     Require(resumed?.Phase == "monitoring", "resume did not restore campaign");
+    var resumedConfig = await File.ReadAllTextAsync(installedConfig);
+    Require(resumedConfig.Contains("snapshotSamplerEnabled = true", StringComparison.Ordinal)
+            && resumedConfig.Contains("allowPassiveObservationHooks = false", StringComparison.Ordinal),
+        "resume did not reinstall and reassert the hook-free snapshot profile");
+    Require((await File.ReadAllTextAsync(
+            Path.Combine(game, "Mods", "CrabRuntimeProbe", "Scripts", "dashboard_autostart.txt"))).Trim()
+            == Path.GetFullPath(dashboardExecutable),
+        "resume payload refresh lost dashboard autostart");
     request = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(status, "dashboard_campaign_request.json")));
     Require(request.RootElement.GetProperty("command").GetString() == "resume", "resume marker command mismatch");
 }
@@ -435,7 +630,8 @@ static async Task CollectionAsync()
     var safety = manifestRoot.GetProperty("safety");
     foreach (var name in new[]
              {
-                 "writesDisabled", "rpcCallsDisabled", "mutationDisabled", "rawIdentityDisabled", "hudHookDisabled"
+                 "writesDisabled", "rpcCallsDisabled", "mutationDisabled", "rawIdentityDisabled", "hudHookDisabled",
+                 "hooksDisabled", "runtimeDiscoveryDisabled", "inventoryStagesDisabled"
              })
         Require(safety.GetProperty(name).ValueKind == JsonValueKind.True, $"safety contract mismatch {name}");
     var fileEntry = manifestRoot.GetProperty("files").EnumerateArray().First();
@@ -447,6 +643,85 @@ static async Task CollectionAsync()
         "bundle file contract names/types mismatch");
     using var archive = ZipFile.OpenRead(result.ZipPath);
     Require(archive.Entries.Any(entry => entry.FullName == "bundle_manifest.json"), "ZIP missing manifest");
+}
+
+static async Task SnapshotCollectionSafetyAsync()
+{
+    using var temp = new TempDirectory();
+    var package = CreatePackage(temp.Path);
+    const long generation = 88;
+    const string session = "snapshot-export-session";
+    const string machine = "machine-test";
+    var game = Path.Combine(temp.Path, "safe-game");
+    var scripts = Path.Combine(game, "Mods", "CrabRuntimeProbe", "Scripts");
+    var statusDirectory = Path.Combine(scripts, "results");
+    Directory.CreateDirectory(statusDirectory);
+    var executable = Path.Combine(game, "CrabChampions.exe");
+    await File.WriteAllBytesAsync(executable, Array.Empty<byte>());
+    await File.WriteAllTextAsync(
+        Path.Combine(statusDirectory, "live_status.slot0.json"),
+        StatusJson(30, DateTimeOffset.UtcNow, generation, session));
+    await File.WriteAllTextAsync(
+        Path.Combine(statusDirectory, $"access_evidence_{session}.jsonl"),
+        "{\"schemaVersion\":2,\"recordType\":\"coordinator-status\",\"campaignGeneration\":88,\"sessionId\":\"snapshot-export-session\"}\n"
+        + SnapshotDeltaJsonl("crystals", "crystals", 10m, 20m, session, generation, machine)
+        + "\n");
+    var state = new LocalCampaignState(
+        1,
+        "crabsync-full-observe",
+        "Snapshot Export",
+        generation,
+        session,
+        machine,
+        CampaignRole.Host,
+        game,
+        executable,
+        statusDirectory,
+        "monitoring",
+        DateTimeOffset.UtcNow.AddMinutes(-2),
+        DateTimeOffset.UtcNow,
+        string.Empty);
+    var safeResult = await new EvidenceCollector().CollectAsync(
+        state,
+        Path.Combine(temp.Path, "safe-exports"),
+        resourceStartPath: package);
+    var checklist = await File.ReadAllTextAsync(Path.Combine(safeResult.BundleDirectory, "checklist_report.md"));
+    Require(checklist.Contains("[x] Crystal gain observed - `Confirmed`", StringComparison.Ordinal),
+        "export did not replay GUI snapshot evidence into its checklist report");
+    var safeManifest = JsonSerializer.Deserialize<BundleManifest>(
+        await File.ReadAllTextAsync(Path.Combine(safeResult.BundleDirectory, "bundle_manifest.json")),
+        JsonOptions())!;
+    Require(safeManifest.Safety.AllDisabled, "clean status did not produce a hook-free bundle safety claim");
+
+    const string unsafeSession = "legacy-hook-session";
+    var unsafeGame = Path.Combine(temp.Path, "unsafe-game");
+    var unsafeStatusDirectory = Path.Combine(unsafeGame, "Mods", "CrabRuntimeProbe", "Scripts", "results");
+    Directory.CreateDirectory(unsafeStatusDirectory);
+    var unsafeExecutable = Path.Combine(unsafeGame, "CrabChampions.exe");
+    await File.WriteAllBytesAsync(unsafeExecutable, Array.Empty<byte>());
+    var legacyStatus = StatusJson(2, DateTimeOffset.UtcNow, generation, unsafeSession)
+        .Replace("\"hooksDisabled\":true,", string.Empty, StringComparison.Ordinal);
+    await File.WriteAllTextAsync(Path.Combine(unsafeStatusDirectory, "live_status.slot0.json"), legacyStatus);
+    var unsafeState = state with
+    {
+        SessionId = unsafeSession,
+        GameDirectory = unsafeGame,
+        ExecutablePath = unsafeExecutable,
+        StatusDirectory = unsafeStatusDirectory
+    };
+    var unsafeResult = await new EvidenceCollector().CollectAsync(
+        unsafeState,
+        Path.Combine(temp.Path, "unsafe-exports"),
+        resourceStartPath: package);
+    var unsafeManifest = JsonSerializer.Deserialize<BundleManifest>(
+        await File.ReadAllTextAsync(Path.Combine(unsafeResult.BundleDirectory, "bundle_manifest.json")),
+        JsonOptions())!;
+    Require(!unsafeManifest.Safety.HooksDisabled && !unsafeManifest.Safety.AllDisabled
+            && unsafeManifest.DirtyEvidence && unsafeResult.DirtyEvidence,
+        "legacy status without hooksDisabled was falsely exported as hook-free");
+    var diagnostics = await File.ReadAllTextAsync(Path.Combine(unsafeResult.BundleDirectory, "diagnostic_summary.txt"));
+    Require(diagnostics.Contains("hooksDisabled=false", StringComparison.Ordinal),
+        "diagnostic summary hardcoded a hook-free claim for legacy status");
 }
 
 static async Task CorrelationAsync()
@@ -539,8 +814,13 @@ static async Task SourceGuardsAndFixturesAsync()
         .EnumerateArray().Select(item => item.GetString()).ToHashSet();
     Require(safetyRequired.SetEquals(new[]
     {
-        "writesDisabled", "rpcCallsDisabled", "mutationDisabled", "rawIdentityDisabled", "hudHookDisabled"
+        "writesDisabled", "rpcCallsDisabled", "mutationDisabled", "rawIdentityDisabled", "hudHookDisabled",
+        "hooksDisabled", "runtimeDiscoveryDisabled", "inventoryStagesDisabled"
     }), "evidence schema safety contract diverged");
+    foreach (var name in safetyRequired)
+        Require(schema.GetProperty("properties").GetProperty("safety").GetProperty("properties")
+                .GetProperty(name!).GetProperty("type").GetString() == "boolean",
+            $"evidence schema must represent diagnostic true/false safety for {name}");
 }
 
 static string CreatePackage(string root)
@@ -557,9 +837,9 @@ static string CreatePackage(string root)
     File.WriteAllText(Path.Combine(campaign, "crabsync_coverage_catalog.json"),
         "{\"schemaVersion\":\"coverage-catalog-v1\",\"catalogHash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"rows\":[{\"id\":\"health-row\",\"category\":\"health\",\"symbolPath\":\"/Script/Test:Health\",\"type\":\"property\",\"source\":\"object dump\",\"relevanceToCrabSync\":\"health\",\"coverageDisposition\":\"needs-coverage\",\"checklistLinkage\":[\"health-damage\"]}]}" );
     File.WriteAllText(Path.Combine(campaign, "crabsync-full-observe.checklist.json"),
-        "{\"schemaVersion\":\"crabsync-checklist-v1\",\"entries\":[{\"id\":\"health-damage\",\"section\":\"Health\",\"label\":\"Damage\",\"nextAction\":\"Take damage\",\"completionRule\":\"qualifying-evidence\"}]}" );
+        "{\"schemaVersion\":\"crabsync-checklist-v1\",\"entries\":[{\"id\":\"health-damage\",\"section\":\"Health\",\"label\":\"Damage\",\"nextAction\":\"Take damage\",\"completionRule\":\"qualifying-evidence\"},{\"id\":\"resource-crystal-gain\",\"section\":\"Resources and slots\",\"label\":\"Crystal gain observed\",\"nextAction\":\"Earn crystals\",\"completionRule\":\"qualifying-evidence\"}]}" );
     File.WriteAllText(Path.Combine(campaign, "crabsync-full-observe.profile.json"),
-        "{\"id\":\"crabsync-full-observe\",\"safety\":{\"writesEnabled\":false,\"rpcInvocationEnabled\":false,\"propertyMutationEnabled\":false,\"hudHookEnabled\":false,\"rawIdentityEnabled\":false,\"externalRelayEnabled\":false,\"syntheticValuesEnabled\":false,\"staleUObjectRetentionEnabled\":false}}" );
+        "{\"id\":\"crabsync-full-observe\",\"safety\":{\"writesEnabled\":false,\"rpcInvocationEnabled\":false,\"propertyMutationEnabled\":false,\"hudHookEnabled\":false,\"rawIdentityEnabled\":false,\"externalRelayEnabled\":false,\"syntheticValuesEnabled\":false,\"staleUObjectRetentionEnabled\":false},\"normalMode\":{\"snapshotSamplerEnabled\":true,\"gameplayHooksEnabled\":false,\"lifecycleHooksEnabled\":false,\"runtimeDiscoveryEnabled\":false,\"inventoryEscalationEnabled\":false},\"passiveHooks\":{\"enabled\":false},\"inventoryEscalation\":{\"enabled\":false},\"runtimeDiscovery\":{\"enabled\":false}}" );
     Directory.CreateDirectory(Path.Combine(package, "schemas"));
     return package;
 }
@@ -600,6 +880,96 @@ static BundleFileEntry Entry(string root, string path, string kind)
         hash, hash, kind);
 }
 
+static string SnapshotDeltaJsonl(
+    string category,
+    string field,
+    object before,
+    object after,
+    string session,
+    long generation,
+    string machine,
+    bool fingerprint = false,
+    bool hooksDisabled = true,
+    bool dirtyEvidence = false)
+{
+    return string.Join('\n', Enumerable.Range(1, 3)
+        .Select(index => SnapshotRow(
+            index, category, field, before, session, generation, machine,
+            fingerprint: fingerprint,
+            hooksDisabled: hooksDisabled,
+            dirtyEvidence: dirtyEvidence))
+        .Concat(Enumerable.Range(4, 3)
+            .Select(index => SnapshotRow(
+                index, category, field, after, session, generation, machine,
+                fingerprint: fingerprint,
+                hooksDisabled: hooksDisabled,
+                dirtyEvidence: dirtyEvidence))));
+}
+
+static string SnapshotRow(
+    long sequence,
+    string category,
+    string field,
+    object value,
+    string session,
+    long generation,
+    string machine,
+    string worldFingerprint = "world-a",
+    string playerStateFingerprint = "player-a",
+    bool fingerprint = false,
+    bool hooksDisabled = true,
+    bool dirtyEvidence = false,
+    bool crashSuspected = false,
+    bool stable = true)
+{
+    var observedField = new Dictionary<string, object?>
+    {
+        ["status"] = "observed",
+        [fingerprint ? "valueFingerprint" : "value"] = value
+    };
+    var row = new Dictionary<string, object?>
+    {
+        ["schemaVersion"] = 1,
+        ["recordType"] = "snapshot-observation",
+        ["sessionId"] = session,
+        ["campaignId"] = "crabsync-full-observe",
+        ["campaignGeneration"] = generation,
+        ["machineId"] = machine,
+        ["sequence"] = sequence,
+        ["timestampUtc"] = DateTimeOffset.Parse("2026-07-10T20:00:00Z").AddSeconds(sequence),
+        ["lifecycleGeneration"] = 1,
+        ["context"] = "run",
+        ["selectedRole"] = "host",
+        ["observedRole"] = "host",
+        ["worldFingerprint"] = worldFingerprint,
+        ["playerStateFingerprint"] = playerStateFingerprint,
+        ["category"] = category,
+        ["stability"] = new Dictionary<string, object?>
+        {
+            ["stable"] = stable,
+            ["sampleCount"] = 10,
+            ["dwellSeconds"] = 30,
+            ["worldStable"] = stable,
+            ["playerStateStable"] = stable,
+            ["reason"] = string.Empty
+        },
+        ["fields"] = new Dictionary<string, object?> { [field] = observedField },
+        ["safety"] = new Dictionary<string, object?>
+        {
+            ["writesDisabled"] = true,
+            ["rpcCallsDisabled"] = true,
+            ["mutationDisabled"] = true,
+            ["hooksDisabled"] = hooksDisabled,
+            ["runtimeDiscoveryDisabled"] = true,
+            ["inventoryStagesDisabled"] = true,
+            ["rawIdentityDisabled"] = true
+        },
+        ["dirtyEvidence"] = dirtyEvidence,
+        ["crashSuspected"] = crashSuspected
+    };
+    return JsonSerializer.Serialize(row);
+}
+
 static string StatusJson(long sequence, DateTimeOffset heartbeat, long generation, string session,
     bool crash = false, bool dirty = false) => JsonSerializer.Serialize(new
 {
@@ -617,7 +987,7 @@ static string StatusJson(long sequence, DateTimeOffset heartbeat, long generatio
     authorityStatus = "authority",
     lifecycle = new { state = "stable", generation = 1, world = "Island", context = "run", stable = true },
     runtime = new { gameProcessRunning = true, gameProcessState = "running", ue4ssState = "loaded", runtimeProbeState = "healthy", runtimeProbeLoaded = true, currentProbeStage = "observe" },
-    safety = new { writesDisabled = true, rpcsDisabled = true, mutationDisabled = true, hudHookDisabled = true, rawIdentityDisabled = true, inventoryDepth = 2, circuitBreakers = new { inventory = "closed" } },
+    safety = new { writesDisabled = true, rpcsDisabled = true, mutationDisabled = true, hudHookDisabled = true, rawIdentityDisabled = true, hooksDisabled = true, runtimeDiscoveryDisabled = true, inventoryStagesDisabled = true, inventoryDepth = 2, circuitBreakers = new { inventory = "closed" } },
     checklist = new { },
     evidenceHealth = new { state = dirty ? "dirty" : "healthy", canonicalRows = 1, rejectedRows = 0, dirtyRows = dirty ? 1 : 0 },
     crashSuspected = crash,

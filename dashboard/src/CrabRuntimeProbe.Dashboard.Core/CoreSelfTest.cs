@@ -47,7 +47,8 @@ public static class DemoStatus
       "runtime": { "gameProcessRunning": true, "gameProcessState": "running", "ue4ssState": "loaded", "runtimeProbeState": "healthy", "runtimeProbeLoaded": true, "currentProbeStage": "passive-observe" },
       "safety": {
         "writesDisabled": true, "rpcsDisabled": true, "mutationDisabled": true,
-        "hudHookDisabled": true, "rawIdentityDisabled": true, "inventoryDepth": 2,
+        "hudHookDisabled": true, "rawIdentityDisabled": true, "hooksDisabled": true,
+        "runtimeDiscoveryDisabled": true, "inventoryStagesDisabled": true, "inventoryDepth": 2,
         "circuitBreakers": { "inventory": "closed", "health": "closed" }
       },
       "checklist": {

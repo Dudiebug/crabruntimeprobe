@@ -223,6 +223,9 @@ try {
   }
 
   Copy-CleanDirectory -Source (Join-Path $RepoRoot "client\Mods\CrabRuntimeProbe") -Destination (Join-Path $BundleMods "CrabRuntimeProbe")
+  Copy-RequiredFile `
+    -Source (Join-Path $RepoRoot "schemas\snapshot-observation-v1.schema.json") `
+    -Destination (Join-Path $BundleRoot "schemas\snapshot-observation-v1.schema.json")
   Write-ModsTxt -ModsDir $BundleMods
   Write-InstallTxt -BundleDir $BundleRoot
 

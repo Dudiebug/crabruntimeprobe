@@ -89,11 +89,15 @@ public sealed record SafetyInfo(
     bool MutationDisabled,
     bool HudHookDisabled,
     bool RawIdentityDisabled,
+    bool HooksDisabled,
+    bool RuntimeDiscoveryDisabled,
+    bool InventoryStagesDisabled,
     int InventoryDepth,
     IReadOnlyDictionary<string, string> CircuitBreakers)
 {
     public bool AllRequiredSafe =>
-        WritesDisabled && RpcsDisabled && MutationDisabled && HudHookDisabled && RawIdentityDisabled;
+        WritesDisabled && RpcsDisabled && MutationDisabled && HudHookDisabled && RawIdentityDisabled
+        && HooksDisabled && RuntimeDiscoveryDisabled && InventoryStagesDisabled;
 }
 
 public sealed record ChecklistEvidence(
@@ -156,7 +160,7 @@ public sealed record LiveStatusSnapshot(
         "unknown",
         new LifecycleInfo("not-started", 0, string.Empty, string.Empty, false, null),
         new RuntimeInfo(false, "not-running", "unknown", "not-loaded", false, "idle", null),
-        new SafetyInfo(true, true, true, true, true, 0,
+        new SafetyInfo(true, true, true, true, true, true, true, true, 0,
             new ReadOnlyDictionary<string, string>(new Dictionary<string, string>())),
         new ReadOnlyDictionary<string, ChecklistEvidence>(new Dictionary<string, ChecklistEvidence>()),
         new EvidenceHealthInfo("no-evidence", 0, 0, 0, string.Empty),
@@ -370,12 +374,16 @@ public sealed record BundleSafety(
     bool RpcCallsDisabled,
     bool MutationDisabled,
     bool RawIdentityDisabled,
-    bool HudHookDisabled)
+    bool HudHookDisabled,
+    bool HooksDisabled,
+    bool RuntimeDiscoveryDisabled,
+    bool InventoryStagesDisabled)
 {
-    public static BundleSafety ReadOnly { get; } = new(true, true, true, true, true);
+    public static BundleSafety ReadOnly { get; } = new(true, true, true, true, true, true, true, true);
     [System.Text.Json.Serialization.JsonIgnore]
     public bool AllDisabled => WritesDisabled && RpcCallsDisabled && MutationDisabled
-                               && RawIdentityDisabled && HudHookDisabled;
+                               && RawIdentityDisabled && HudHookDisabled && HooksDisabled
+                               && RuntimeDiscoveryDisabled && InventoryStagesDisabled;
 }
 
 public sealed record BundleManifest(

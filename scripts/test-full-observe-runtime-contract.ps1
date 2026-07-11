@@ -22,10 +22,18 @@ $hooks = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'passive_hook_manager
 $state = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'campaign_state.lua')
 $status = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'status_writer.lua')
 $coordinator = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'full_observe_coordinator.lua')
+$sampler = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'snapshot_sampler.lua')
 $safe = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'safe_access.lua')
 $catalog = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'crabsync_catalog.lua')
 $evidenceWriter = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'evidence_writer.lua')
 $resultWriter = Get-Content -Raw -LiteralPath (Join-Path $luaRoot 'result_writer.lua')
+
+Assert-CrabRuntimeProbeNormalSamplerSafety `
+  -ScriptsRoot $luaRoot `
+  -Label 'full-observe normal snapshot path'
+Assert-CrabRuntimeProbeSnapshotObservationSchema `
+  -SchemaPath (Join-Path $repoRoot 'schemas\snapshot-observation-v1.schema.json') `
+  -Label 'snapshot observation schema'
 
 foreach ($category in @('WeaponMods', 'AbilityMods', 'MeleeMods', 'Perks', 'Relics')) {
   Assert-Contains $inventory ("\b" + [regex]::Escape($category) + '\b') "Missing staged inventory category: $category"
@@ -123,18 +131,47 @@ foreach ($field in @(
   Assert-Contains $state ("\b" + [regex]::Escape($field) + '\s*=') "Status snapshot contract is missing $field."
 }
 
-Assert-Contains $coordinator "RegisterLoadMapPreHook" 'Lifecycle evidence must include passive pre-travel breadcrumbs.'
-Assert-Contains $coordinator "RegisterLoadMapPostHook" 'Lifecycle evidence must include passive post-travel breadcrumbs.'
-Assert-Contains $coordinator "RegisterInitGameStatePostHook" 'Lifecycle evidence must include passive GameState initialization breadcrumbs.'
-Assert-Contains $coordinator 'fullObserveStableSamplesRequired' 'Post-transition reads must require consecutive stable samples.'
-Assert-Contains $coordinator 'fullObserveStableDwellSeconds' 'Post-transition reads must require a stable dwell interval.'
-Assert-Contains $coordinator "self\.stableReady and self\.state\.lifecycleState == 'stable'" 'Runtime discovery may run only after the coordinator stability barrier opens.'
-Assert-Contains $coordinator "self:resetStability\('passive lifecycle breadcrumb:" 'Global lifecycle breadcrumbs must reset the stability barrier.'
-Assert-Contains $coordinator 'self\.awaitingLoadMapPost ~= true' 'A stale runner stable state must not cross the load-map pre/post barrier.'
-Assert-Contains $coordinator "visiblePlayerStates < 2" 'Lifecycle polling must detect disconnect/leave transitions without a broad actor hook.'
-Assert-Contains $coordinator "observedRoleFromFacts" 'Observed role must be derived independently of the selected role declaration.'
+foreach ($forbiddenNormalPath in @(
+  'RegisterHook\s*\(',
+  'UnregisterHook\s*\(',
+  'RegisterLoadMap(?:Pre|Post)?Hook\s*\(',
+  'RegisterInitGameState(?:Pre|Post)?Hook\s*\(',
+  'registerAll\s*\(',
+  'registerLifecycleHooks\s*\(',
+  'inventory\s*:\s*onTick\s*\(',
+  'ForEachFunction\s*\('
+)) {
+  Assert-NotContains $coordinator $forbiddenNormalPath "Normal coordinator contains forbidden hook/discovery/inventory path: $forbiddenNormalPath"
+  Assert-NotContains $sampler $forbiddenNormalPath "Normal sampler contains forbidden hook/discovery/inventory path: $forbiddenNormalPath"
+}
+Assert-Contains $coordinator "require\('snapshot_sampler'\)" 'Normal coordinator must load the snapshot sampler.'
+Assert-Contains $coordinator 'config\.snapshotSamplerEnabled == true' 'Snapshot sampling must require its explicit gate.'
+Assert-Contains $coordinator 'config\.allowPassiveObservationHooks ~= true' 'Snapshot mode must reject legacy passive hooks.'
+Assert-Contains $coordinator 'config\.allowFullObserveInventoryStages ~= true' 'Snapshot mode must reject legacy inventory stages.'
+Assert-Contains $coordinator 'config\.allowFullObserveRuntimeDiscovery ~= true' 'Snapshot mode must reject runtime discovery.'
+Assert-Contains $coordinator 'snapshotStableSamplesRequired, 10, 10, 120' 'Stable reads must require at least ten consecutive samples.'
+Assert-Contains $coordinator 'snapshotStableDwellSeconds, 30, 30, 600' 'Stable reads must require at least a thirty-second dwell.'
+Assert-Contains $coordinator "self\.stableReady and self\.state\.lifecycleState == 'stable'" 'Snapshot reads may run only after the stability barrier opens.'
+Assert-Contains $coordinator 'self\.snapshots:onTick\(\)' 'The stable normal path must delegate only to the snapshot sampler.'
+Assert-Contains $coordinator "transitionSource = 'stable-polling'" 'Lifecycle evidence must come from stable polling, not global hooks.'
+Assert-Contains $coordinator "observedRoleFromAuthority" 'Observed role must be derived independently of the selected role declaration.'
 Assert-Contains $coordinator "safe\.fingerprintValue" 'Runtime object identities must be emitted only as fingerprints.'
 Assert-Contains $coordinator 'generation ~= nil and generation >= 1' 'Campaign generation zero/unassigned must fail closed.'
+
+foreach ($field in @(
+  'recordType', 'sessionId', 'campaignId', 'campaignGeneration', 'machineId',
+  'sequence', 'timestampUtc', 'lifecycleGeneration', 'context', 'selectedRole',
+  'observedRole', 'worldFingerprint', 'playerStateFingerprint', 'category',
+  'stability', 'fields', 'safety', 'dirtyEvidence', 'crashSuspected'
+)) {
+  Assert-Contains $sampler ("\b" + [regex]::Escape($field) + '\s*=') "Snapshot observation source is missing $field."
+}
+foreach ($field in @(
+  'writesDisabled', 'rpcCallsDisabled', 'mutationDisabled', 'hooksDisabled',
+  'runtimeDiscoveryDisabled', 'inventoryStagesDisabled', 'rawIdentityDisabled'
+)) {
+  Assert-Contains $sampler ("\b" + [regex]::Escape($field) + '\s*=\s*true') "Snapshot safety field $field must be emitted as true."
+}
 
 foreach ($canonicalField in @('currentProbeStage', 'runtimeProbeLoaded', 'runtimeProbeState', 'ue4ssState', 'gameProcessState', 'rpcsDisabled')) {
   Assert-Contains $state ("\b" + $canonicalField + '\s*=') "Live status is missing canonical field $canonicalField."
@@ -147,9 +184,14 @@ Assert-Contains $evidenceWriter 'activeEvidencePath' 'Evidence fallback selectio
 Assert-Contains $resultWriter 'activeResultPath' 'Result fallback selection must be sticky instead of alternating output paths.'
 $unsafeBlock = [regex]::Match($evidenceWriter, 'local function unsafeActiveGates\(config\)(?<body>.*?)\r?\nend\r?\n\r?\nlocal function activeResearchGates', [Text.RegularExpressions.RegexOptions]::Singleline)
 if (-not $unsafeBlock.Success) { throw 'Could not isolate unsafe gate classification.' }
-foreach ($safeObservationGate in @('fullObserveEnabled', 'allowPassiveObservationHooks', 'allowFullObserveInventoryStages', 'allowFullObserveRuntimeDiscovery', 'statusWriterEnabled')) {
+foreach ($safeObservationGate in @('fullObserveEnabled', 'snapshotSamplerEnabled', 'statusWriterEnabled')) {
   if ($unsafeBlock.Groups['body'].Value -match [regex]::Escape($safeObservationGate)) {
     throw "$safeObservationGate must be reported as an observation gate, not an unsafe gate."
+  }
+}
+foreach ($unsafeLegacyGate in @('allowPassiveObservationHooks', 'allowFullObserveInventoryStages', 'allowFullObserveRuntimeDiscovery')) {
+  if ($unsafeBlock.Groups['body'].Value -notmatch [regex]::Escape($unsafeLegacyGate)) {
+    throw "$unsafeLegacyGate must be reported as unsafe when active."
   }
 }
 

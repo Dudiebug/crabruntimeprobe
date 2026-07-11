@@ -60,6 +60,7 @@ public sealed class EvidenceCollector
     private readonly EvidenceRedactor _redactor;
     private readonly DashboardResourceLocator _resourceLocator;
     private readonly ChecklistDefinitionLoader _checklistLoader;
+    private readonly SnapshotEvidenceService _snapshotEvidenceService;
 
     public EvidenceCollector(
         LiveStatusReader? statusReader = null,
@@ -68,7 +69,8 @@ public sealed class EvidenceCollector
         CapabilityReadinessService? readinessService = null,
         EvidenceRedactor? redactor = null,
         DashboardResourceLocator? resourceLocator = null,
-        ChecklistDefinitionLoader? checklistLoader = null)
+        ChecklistDefinitionLoader? checklistLoader = null,
+        SnapshotEvidenceService? snapshotEvidenceService = null)
     {
         _statusReader = statusReader ?? new LiveStatusReader();
         _fallbackChecklistReducer = checklistReducer ?? new ChecklistReducer();
@@ -77,6 +79,7 @@ public sealed class EvidenceCollector
         _redactor = redactor ?? new EvidenceRedactor();
         _resourceLocator = resourceLocator ?? new DashboardResourceLocator();
         _checklistLoader = checklistLoader ?? new ChecklistDefinitionLoader();
+        _snapshotEvidenceService = snapshotEvidenceService ?? new SnapshotEvidenceService();
     }
 
     public async Task<CollectionResult> CollectAsync(
@@ -108,12 +111,42 @@ public sealed class EvidenceCollector
         var sourceHashes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var status = await _statusReader.ReadLatestAsync(state.StatusDirectory, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
-        var activeRuntimeSession = status.HasSnapshot && !string.IsNullOrWhiteSpace(status.Snapshot.SessionId)
-            ? status.Snapshot.SessionId
-            : state.SessionId;
         var copiedEvidence = 0;
         var omitted = new List<string>();
         var dirty = status.Snapshot.DirtyEvidence || status.UsedLastGood || !status.HasSnapshot;
+
+        try
+        {
+            var snapshotEvidence = await _snapshotEvidenceService.LoadAsync(state, cancellationToken)
+                .ConfigureAwait(false);
+            if (snapshotEvidence.Replay.Rejections.Count > 0)
+            {
+                omitted.Add($"snapshot evidence: {snapshotEvidence.Replay.Rejections.Count} row(s) rejected");
+                dirty = true;
+            }
+            else
+            {
+                status = _snapshotEvidenceService.Merge(
+                    status,
+                    snapshotEvidence.Replay,
+                    SnapshotReplayScope.FromCampaign(state));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            omitted.Add($"snapshot evidence: unavailable during collection ({ex.Message})");
+            dirty = true;
+        }
+
+        var activeRuntimeSession = status.HasSnapshot && !string.IsNullOrWhiteSpace(status.Snapshot.SessionId)
+            ? status.Snapshot.SessionId
+            : state.SessionId;
+        var bundleSafety = SafetyFrom(status);
+        if (!bundleSafety.AllDisabled)
+        {
+            omitted.Add("safety: current status does not prove all normal-mode hooks and mutation paths disabled");
+            dirty = true;
+        }
 
         foreach (var source in EnumerateApprovedScriptEvidence(state))
         {
@@ -250,7 +283,7 @@ public sealed class EvidenceCollector
         var summaryPath = Path.Combine(bundleDirectory, "diagnostic_summary.txt");
         await AtomicFile.WriteTextAsync(
             summaryPath,
-            RenderDiagnosticSummary(state, status, checklist, readiness, crashSuspected, dirty),
+            RenderDiagnosticSummary(state, status, checklist, readiness, crashSuspected, dirty, bundleSafety),
             cancellationToken).ConfigureAwait(false);
 
         var collectedAt = DateTimeOffset.UtcNow;
@@ -269,7 +302,7 @@ public sealed class EvidenceCollector
             collectedAt,
             crashSuspected,
             dirty,
-            BundleSafety.ReadOnly,
+            bundleSafety,
             copiedEvidence,
             provenance.CatalogSchemaVersion,
             provenance.CatalogHash,
@@ -352,8 +385,29 @@ public sealed class EvidenceCollector
                      "staleUObjectRetentionEnabled"
                  })
             if (!safety.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.False) return false;
+
+        if (!root.TryGetProperty("normalMode", out var normalMode)
+            || normalMode.ValueKind != JsonValueKind.Object
+            || !IsBoolean(normalMode, "snapshotSamplerEnabled", true)
+            || !IsBoolean(normalMode, "gameplayHooksEnabled", false)
+            || !IsBoolean(normalMode, "lifecycleHooksEnabled", false)
+            || !IsBoolean(normalMode, "runtimeDiscoveryEnabled", false)
+            || !IsBoolean(normalMode, "inventoryEscalationEnabled", false))
+            return false;
+        foreach (var sectionName in new[] { "passiveHooks", "inventoryEscalation", "runtimeDiscovery" })
+        {
+            if (!root.TryGetProperty(sectionName, out var section)
+                || section.ValueKind != JsonValueKind.Object
+                || !IsBoolean(section, "enabled", false))
+                return false;
+        }
         return true;
     }
+
+    private static bool IsBoolean(JsonElement element, string name, bool expected) =>
+        element.TryGetProperty(name, out var value)
+        && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+        && value.GetBoolean() == expected;
 
     private async Task<CanonicalValidation> ValidateCanonicalAsync(
         string source,
@@ -379,7 +433,10 @@ public sealed class EvidenceCollector
                 {
                     var root = document.RootElement;
                     if (ContainsUnsafeFlag(root))
-                        return new CanonicalValidation(false, false, "unsafe write/RPC/HUD/raw-identity flag detected");
+                        return new CanonicalValidation(
+                            false,
+                            false,
+                            "unsafe write/RPC/hook/discovery/inventory-stage/raw-identity flag detected");
                     var generation = FindInt64(root, "campaignGeneration", "generation");
                     if (generation is not null && expectedGeneration > 0 && generation != expectedGeneration)
                         return new CanonicalValidation(false, true, "belongs to a prior campaign generation");
@@ -412,7 +469,16 @@ public sealed class EvidenceCollector
                 if (property.Value.ValueKind == JsonValueKind.True
                     && normalized is "allowwriteprobes" or "allowrpcprobes" or "allowhudtickhook"
                         or "allowrawidentityevidence" or "writesenabled" or "rpcinvocationenabled"
-                        or "propertymutationenabled" or "hudhookenabled" or "rawidentityenabled")
+                        or "propertymutationenabled" or "hudhookenabled" or "rawidentityenabled"
+                        or "allowpassiveobservationhooks" or "allowfullobserveruntimediscovery"
+                        or "allowfullobserveinventorystages" or "hooksenabled" or "gameplayhooksenabled"
+                        or "lifecyclehooksenabled" or "runtimediscoveryenabled" or "inventorystagesenabled"
+                        or "inventoryescalationenabled")
+                    return true;
+                if (property.Value.ValueKind == JsonValueKind.False
+                    && normalized is "writesdisabled" or "rpccallsdisabled" or "rpcsdisabled"
+                        or "mutationdisabled" or "hudhookdisabled" or "rawidentitydisabled"
+                        or "hooksdisabled" or "runtimediscoverydisabled" or "inventorystagesdisabled")
                     return true;
                 if (ContainsUnsafeFlag(property.Value)) return true;
             }
@@ -623,13 +689,30 @@ public sealed class EvidenceCollector
         return builder.ToString();
     }
 
+    private static BundleSafety SafetyFrom(LiveStatusReadResult status)
+    {
+        if (!status.HasSnapshot)
+            return new BundleSafety(false, false, false, false, false, false, false, false);
+        var safety = status.Snapshot.Safety;
+        return new BundleSafety(
+            safety.WritesDisabled,
+            safety.RpcsDisabled,
+            safety.MutationDisabled,
+            safety.RawIdentityDisabled,
+            safety.HudHookDisabled,
+            safety.HooksDisabled,
+            safety.RuntimeDiscoveryDisabled,
+            safety.InventoryStagesDisabled);
+    }
+
     private static string RenderDiagnosticSummary(
         LocalCampaignState state,
         LiveStatusReadResult status,
         IReadOnlyList<ChecklistViewItem> checklist,
         IReadOnlyList<CapabilityReadiness> readiness,
         bool crashSuspected,
-        bool dirty)
+        bool dirty,
+        BundleSafety safety)
     {
         var builder = new StringBuilder();
         builder.AppendLine($"campaign={state.CampaignName}");
@@ -641,9 +724,12 @@ public sealed class EvidenceCollector
         builder.AppendLine($"dirtyEvidence={dirty.ToString().ToLowerInvariant()}");
         builder.AppendLine($"checklistComplete={checklist.Count(item => item.IsComplete)}");
         builder.AppendLine($"checklistMissing={checklist.Count(item => !item.IsComplete)}");
-        builder.AppendLine("writesDisabled=true");
-        builder.AppendLine("rpcsDisabled=true");
-        builder.AppendLine("mutationDisabled=true");
+        builder.AppendLine($"writesDisabled={safety.WritesDisabled.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"rpcsDisabled={safety.RpcCallsDisabled.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"hooksDisabled={safety.HooksDisabled.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"runtimeDiscoveryDisabled={safety.RuntimeDiscoveryDisabled.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"inventoryStagesDisabled={safety.InventoryStagesDisabled.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"mutationDisabled={safety.MutationDisabled.ToString().ToLowerInvariant()}");
         builder.AppendLine("passiveCampaignIsNotWriteApplyProof=true");
         foreach (var item in readiness)
             builder.AppendLine($"capability.{SafeName(item.Category)}={(item.Complete ? "complete" : "incomplete")}");
@@ -952,7 +1038,7 @@ public static class SupportSummary
             $"game={snapshot.Runtime.GameProcessState} ue4ss={snapshot.Runtime.Ue4ssState} probe={snapshot.Runtime.RuntimeProbeState}",
             $"lifecycle={snapshot.Lifecycle.State} stage={snapshot.Runtime.CurrentProbeStage} sequence={snapshot.Sequence} stale={status.IsStale}",
             $"evidence={snapshot.EvidenceHealth.State} dirty={snapshot.DirtyEvidence || status.UsedLastGood} crashSuspected={snapshot.CrashSuspected}",
-            $"safety=writes:{snapshot.Safety.WritesDisabled},rpcs:{snapshot.Safety.RpcsDisabled},mutation:{snapshot.Safety.MutationDisabled},hud:{snapshot.Safety.HudHookDisabled},identity:{snapshot.Safety.RawIdentityDisabled}"
+            $"safety=writes:{snapshot.Safety.WritesDisabled},rpcs:{snapshot.Safety.RpcsDisabled},mutation:{snapshot.Safety.MutationDisabled},hooks:{snapshot.Safety.HooksDisabled},hud:{snapshot.Safety.HudHookDisabled},identity:{snapshot.Safety.RawIdentityDisabled}"
         });
     }
 }

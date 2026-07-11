@@ -13,6 +13,7 @@ $script:CrabRuntimeProbeRequiredModFiles = @(
   "Scripts\record_builder.lua",
   "Scripts\campaign_state.lua",
   "Scripts\status_writer.lua",
+  "Scripts\snapshot_sampler.lua",
   "Scripts\passive_hook_manager.lua",
   "Scripts\inventory_stage_manager.lua",
   "Scripts\full_observe_coordinator.lua",
@@ -53,6 +54,7 @@ $script:CrabRuntimeProbeRequiredConfigDefaults = [ordered]@{
   allowInventoryUserdataIntrospectionProbes = "false"
   allowInventoryArrayCountProbes = "false"
   allowInventoryElementDataAssetReadProbes = "false"
+  snapshotSamplerEnabled = "false"
   fullObserveEnabled = "false"
   allowPassiveObservationHooks = "false"
   allowFullObserveInventoryStages = "false"
@@ -269,6 +271,260 @@ function Assert-CrabRuntimeProbeModLayout {
   if ($errors.Count -gt 0) {
     $message = "Invalid $Label at $ModRoot`n" + (($errors | ForEach-Object { " - $_" }) -join "`n")
     throw $message
+  }
+}
+
+function Get-CrabRuntimeProbeLuaRequireClosure {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScriptsRoot,
+    [Parameter(Mandatory = $true)][string[]]$EntryModules
+  )
+
+  if (-not (Test-Path -LiteralPath $ScriptsRoot -PathType Container)) {
+    throw "Lua scripts directory is missing: $ScriptsRoot"
+  }
+
+  $queue = New-Object System.Collections.Generic.Queue[string]
+  $visited = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+  $files = New-Object System.Collections.Generic.List[object]
+
+  foreach ($entry in $EntryModules) {
+    $moduleName = ([string]$entry).Trim()
+    if ($moduleName.EndsWith('.lua', [System.StringComparison]::OrdinalIgnoreCase)) {
+      $moduleName = $moduleName.Substring(0, $moduleName.Length - 4)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($moduleName)) { $queue.Enqueue($moduleName) }
+  }
+
+  while ($queue.Count -gt 0) {
+    $moduleName = $queue.Dequeue()
+    if (-not $visited.Add($moduleName)) { continue }
+
+    $relativePath = ($moduleName -replace '\.', '\') + '.lua'
+    $modulePath = Join-Path $ScriptsRoot $relativePath
+    if (-not (Test-Path -LiteralPath $modulePath -PathType Leaf)) {
+      throw "Normal-mode Lua dependency is missing: $moduleName ($modulePath)"
+    }
+
+    $source = Get-Content -Raw -LiteralPath $modulePath
+    $files.Add([pscustomobject]@{
+      Module = $moduleName
+      Path = $modulePath
+      Source = $source
+    }) | Out-Null
+
+    $requirePatterns = @(
+      '[^A-Za-z0-9_]require\s*\(\s*[''"](?<module>[A-Za-z0-9_.]+)[''"]\s*\)',
+      '[^A-Za-z0-9_]pcall\s*\(\s*require\s*,\s*[''"](?<module>[A-Za-z0-9_.]+)[''"]\s*\)'
+    )
+    foreach ($requirePattern in $requirePatterns) {
+      foreach ($match in [regex]::Matches("`n$source", $requirePattern)) {
+        $dependency = $match.Groups['module'].Value
+        $dependencyPath = Join-Path $ScriptsRoot (($dependency -replace '\.', '\') + '.lua')
+        if (Test-Path -LiteralPath $dependencyPath -PathType Leaf) {
+          $queue.Enqueue($dependency)
+        }
+      }
+    }
+  }
+
+  return @($files | ForEach-Object { $_ })
+}
+
+function Assert-CrabRuntimeProbeNormalSamplerSafety {
+  param(
+    [Parameter(Mandatory = $true)][string]$ScriptsRoot,
+    [string]$Label = 'normal snapshot sampler'
+  )
+
+  $closure = @(Get-CrabRuntimeProbeLuaRequireClosure `
+    -ScriptsRoot $ScriptsRoot `
+    -EntryModules @('full_observe_coordinator', 'snapshot_sampler'))
+  $modules = @($closure | ForEach-Object { [string]$_.Module })
+
+  foreach ($expertModule in @('passive_hook_manager', 'inventory_stage_manager')) {
+    if ($modules -contains $expertModule) {
+      throw "Unsafe $Label dependency: expert module '$expertModule' is reachable from the normal sampler/coordinator path."
+    }
+  }
+
+  $combined = ($closure | ForEach-Object {
+    "`n-- module: $($_.Module)`n$($_.Source)"
+  }) -join "`n"
+
+  $forbidden = [ordered]@{
+    '(?<![A-Za-z0-9_])RegisterHook\s*\(' = 'gameplay/native RegisterHook call'
+    '(?<![A-Za-z0-9_])UnregisterHook\s*\(' = 'gameplay/native UnregisterHook call'
+    '(?<![A-Za-z0-9_])RegisterBeginPlay(?:Pre|Post)?Hook\s*\(' = 'global BeginPlay lifecycle hook'
+    '(?<![A-Za-z0-9_])RegisterLoadMap(?:Pre|Post)?Hook\s*\(' = 'global map lifecycle hook'
+    '(?<![A-Za-z0-9_])RegisterInitGameState(?:Pre|Post)?Hook\s*\(' = 'global GameState lifecycle hook'
+    '(?<![A-Za-z0-9_])ForEachFunction\s*\(' = 'runtime UFunction reflection'
+    '(?<![A-Za-z0-9_])ForEachUObject\s*\(' = 'arbitrary UObject crawl'
+    '(?<![A-Za-z0-9_])NotifyOnNewObject\s*\(' = 'runtime object discovery callback'
+    '(?<![A-Za-z0-9_])FindAllOf\s*\(' = 'runtime class instance enumeration'
+    '(?i)(?:\.|:)\s*findAll\s*\(' = 'runtime class instance enumeration helper'
+    '(?i)\b(?:runtimeDiscover(?:y|Candidates)?|discoverRuntimeCandidates|runRuntimeDiscovery)\s*\(' = 'runtime discovery execution'
+    '(?i)\bregisterAll\s*\(' = 'bulk hook registration'
+    '(?i)\bregisterLifecycleHooks\s*\(' = 'lifecycle hook registration'
+    '(?i)\binventory\s*:\s*(?:onTick|runStage)\s*\(' = 'legacy inventory stage execution'
+    '(?i)\b(?:dofile|loadfile|loadstring)\s*\(' = 'dynamic Lua code/module loading'
+    '(?i)\brequire\s*\((?!\s*[''"])' = 'dynamic Lua module loading'
+    '(?i)\bpcall\s*\(\s*require\s*,(?!\s*[''"])' = 'dynamic protected Lua module loading'
+    'require\s*\(\s*[''"]passive_hook_manager[''"]\s*\)' = 'passive hook manager import'
+    'require\s*\(\s*[''"]inventory_stage_manager[''"]\s*\)' = 'inventory stage manager import'
+  }
+
+  foreach ($entry in $forbidden.GetEnumerator()) {
+    if ($combined -match $entry.Key) {
+      throw "Unsafe $Label path contains $($entry.Value): $($entry.Key)"
+    }
+  }
+
+  $samplerPath = Join-Path $ScriptsRoot 'snapshot_sampler.lua'
+  $sampler = Get-Content -Raw -LiteralPath $samplerPath
+  foreach ($inventoryProperty in @('WeaponMods', 'AbilityMods', 'MeleeMods', 'Perks', 'Relics')) {
+    if ($sampler -match ("\b" + [regex]::Escape($inventoryProperty) + '\b')) {
+      throw "$Label may not access crash-suspect inventory property '$inventoryProperty'."
+    }
+  }
+  if ($sampler -match '(?i)\bgetArrayLength\s*\(') {
+    throw "$Label may not count crash-suspect inventory wrappers with getArrayLength."
+  }
+  $allowedLengthTargets = @('errors', 'parts', '(errors or {})', 'CATEGORY_DEFINITIONS')
+  foreach ($lengthMatch in [regex]::Matches($sampler, '#\s*(?<target>\([^\r\n\)]*\)|[A-Za-z_][A-Za-z0-9_\.]*)')) {
+    $lengthTarget = $lengthMatch.Groups['target'].Value.Trim()
+    if ($allowedLengthTargets -notcontains $lengthTarget) {
+      throw "$Label contains an unreviewed Lua length operation '#$lengthTarget'; inventory-wrapper counts are crash-suspect."
+    }
+  }
+  foreach ($requiredSafetyField in @(
+    'writesDisabled',
+    'rpcCallsDisabled',
+    'mutationDisabled',
+    'hooksDisabled',
+    'runtimeDiscoveryDisabled',
+    'inventoryStagesDisabled',
+    'rawIdentityDisabled'
+  )) {
+    if ($sampler -notmatch ("\b" + [regex]::Escape($requiredSafetyField) + '\s*=\s*true')) {
+      throw "$Label must emit the safety field '$requiredSafetyField' as true."
+    }
+  }
+
+  $coordinatorPath = Join-Path $ScriptsRoot 'full_observe_coordinator.lua'
+  $coordinator = Get-Content -Raw -LiteralPath $coordinatorPath
+  if ($coordinator -notmatch 'require\s*\(\s*[''"]snapshot_sampler[''"]\s*\)') {
+    throw "$Label coordinator must require snapshot_sampler."
+  }
+
+  $mainPath = Join-Path $ScriptsRoot 'main.lua'
+  if (Test-Path -LiteralPath $mainPath -PathType Leaf) {
+    $main = Get-Content -Raw -LiteralPath $mainPath
+    foreach ($expertModule in @('passive_hook_manager', 'inventory_stage_manager')) {
+      $expertImport = '(?:require\s*\(\s*|pcall\s*\(\s*require\s*,\s*)[''"]' + [regex]::Escape($expertModule) + '[''"]'
+      if ($main -match $expertImport) {
+        throw "Unsafe $Label entrypoint imports expert module '$expertModule'."
+      }
+    }
+    if ($main -notmatch 'pcall\s*\(\s*require\s*,\s*[''"]full_observe_coordinator[''"]\s*\)') {
+      throw "$Label entrypoint must load full_observe_coordinator through the protected literal import."
+    }
+    foreach ($defaultFalseGate in @(
+      'snapshotSamplerEnabled',
+      'allowPassiveObservationHooks',
+      'allowFullObserveInventoryStages',
+      'allowFullObserveRuntimeDiscovery'
+    )) {
+      if ($main -notmatch ("\b" + [regex]::Escape($defaultFalseGate) + '\s*=\s*false')) {
+        throw "$Label entrypoint must default $defaultFalseGate=false."
+      }
+    }
+  }
+}
+
+function Assert-CrabRuntimeProbeSnapshotObservationSchema {
+  param(
+    [Parameter(Mandatory = $true)][string]$SchemaPath,
+    [string]$Label = 'snapshot observation schema'
+  )
+
+  if (-not (Test-Path -LiteralPath $SchemaPath -PathType Leaf)) {
+    throw "Missing required $Label`: $SchemaPath"
+  }
+
+  try {
+    $schema = Get-Content -Raw -LiteralPath $SchemaPath | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    throw "Invalid $Label JSON at $SchemaPath`: $($_.Exception.Message)"
+  }
+
+  if ($schema.properties.schemaVersion.const -ne 1) {
+    throw "$Label must require schemaVersion=1."
+  }
+  if ([string]$schema.properties.recordType.const -ne 'snapshot-observation') {
+    throw "$Label must require recordType=snapshot-observation."
+  }
+
+  $topRequired = @($schema.required)
+  foreach ($field in @(
+    'schemaVersion',
+    'recordType',
+    'sessionId',
+    'campaignId',
+    'campaignGeneration',
+    'machineId',
+    'sequence',
+    'timestampUtc',
+    'lifecycleGeneration',
+    'context',
+    'selectedRole',
+    'observedRole',
+    'worldFingerprint',
+    'playerStateFingerprint',
+    'category',
+    'stability',
+    'fields',
+    'safety',
+    'dirtyEvidence',
+    'crashSuspected'
+  )) {
+    if ($topRequired -notcontains $field) {
+      throw "$Label does not require '$field'."
+    }
+  }
+
+  $stabilityRequired = @($schema.properties.stability.required)
+  foreach ($field in @('stable', 'sampleCount', 'dwellSeconds', 'worldStable', 'playerStateStable')) {
+    if ($stabilityRequired -notcontains $field) {
+      throw "$Label stability contract does not require '$field'."
+    }
+  }
+  $stableContract = @($schema.properties.stability.allOf) | Select-Object -First 1
+  if ($null -eq $stableContract -or
+      $stableContract.then.properties.sampleCount.minimum -ne 10 -or
+      $stableContract.then.properties.dwellSeconds.minimum -ne 30 -or
+      $stableContract.then.properties.worldStable.const -ne $true -or
+      $stableContract.then.properties.playerStateStable.const -ne $true) {
+    throw "$Label must enforce 10 samples, 30 seconds, and stable world/PlayerState when stable=true."
+  }
+
+  $safetyRequired = @($schema.properties.safety.required)
+  foreach ($field in @(
+    'writesDisabled',
+    'rpcCallsDisabled',
+    'mutationDisabled',
+    'hooksDisabled',
+    'runtimeDiscoveryDisabled',
+    'inventoryStagesDisabled',
+    'rawIdentityDisabled'
+  )) {
+    if ($safetyRequired -notcontains $field) {
+      throw "$Label safety contract does not require '$field'."
+    }
+    $property = $schema.properties.safety.properties.$field
+    if ($null -eq $property -or $property.const -ne $true) {
+      throw "$Label safety contract must require $field=true."
+    }
   }
 }
 

@@ -37,6 +37,10 @@ const OUTPUTS = {
 const SCHEMA_VERSION = 'coverage-catalog-v1';
 const PROFILE_VERSION = 'crabsync-full-observe-v1';
 const RUNTIME_CONTRACT = Object.freeze({
+  snapshotSampleIntervalSeconds: 3,
+  snapshotStableSamplesRequired: 10,
+  snapshotStableDwellSeconds: 30,
+  snapshotUnchangedHeartbeatSeconds: 30,
   fullObserveHeartbeatSeconds: 1,
   fullObserveInventoryIntervalSeconds: 2,
   fullObserveInventoryHeartbeatSeconds: 30,
@@ -189,6 +193,13 @@ const REQUIRED_PASSIVE_HOOKS = new Set([
   '/Script/CrabChampions.CrabPlayerC:ServerDealDamage',
   '/Script/CrabChampions.CrabPlayerC:ServerDealFallDamage',
   '/Script/CrabChampions.CrabAnvil:MulticastApplyEnhancement'
+]);
+
+// This callback was active in the 2026-07-10 crash dump's Lua hook stack.
+// That does not prove it was the sole cause, but the current hook method is
+// explicitly crash-suspect and must never be recommended by the normal guide.
+const CURRENT_HOOK_METHOD_CRASH_CONTEXTS = new Set([
+  '/Script/CrabChampions.CrabPS:OnRep_IslandRewardRarity'
 ]);
 
 const DENIED_PASSIVE_HOOK_OWNERS = new Set([
@@ -930,8 +941,10 @@ function statusFields(entry, rowType, records, policy) {
       : `${signatureSource} exposes ${argCount} parameter(s); runtime values unobserved`;
   } else if (entry.dumpType) argumentMetadataStatus = `object-dump property type: ${entry.dumpType}`;
 
+  const exactCallCandidate = ['function', 'RPC', 'OnRep', 'multicast', 'event'].includes(rowType);
+  const currentHookCrashContext = CURRENT_HOOK_METHOD_CRASH_CONTEXTS.has(entry.symbolPath);
   let readStatus = 'untested';
-  if (['function', 'RPC', 'OnRep', 'multicast', 'event'].includes(rowType)) readStatus = 'not applicable; passive observation candidate';
+  if (exactCallCandidate) readStatus = 'not applicable; exact-call observation is disabled in normal mode';
   else if (safe && confirmedStageNames.length) readStatus = `confirmed clean staged read: ${confirmedStageNames.join(', ')}`;
   else if (safe) readStatus = 'confirmed read-only in qualifying recorded runtime evidence';
   else if (unsupported && !contaminated) readStatus = 'explicitly unsupported by recorded runtime evidence';
@@ -940,15 +953,18 @@ function statusFields(entry, rowType, records, policy) {
   else if (records.length) readStatus = `partial/unknown runtime result: ${summary.statuses.join(', ') || 'unknown'}`;
   if (contaminated) readStatus = `${readStatus}; dirty/crash-suspect evidence cannot qualify`;
 
-  let naturalObservationStatus = natural ? 'confirmed natural/passive call evidence' : 'not observed naturally';
+  let naturalObservationStatus = natural ? 'confirmed natural state/event evidence' : 'not observed naturally';
+  if (exactCallCandidate) naturalObservationStatus = natural
+    ? 'confirmed prior natural-call evidence; current normal-mode hooks remain disabled'
+    : 'not observed naturally; exact-call watcher disabled in normal mode';
   if (rowType === 'actor' && safe) naturalObservationStatus = 'runtime presence observed';
   if (runtimeDiscovered && !natural) naturalObservationStatus = 'runtime-discovered only; hook registration/discovery is not a natural call';
   if (normalized.some((record) => record.hookRegisteredOnly) && !natural) naturalObservationStatus = 'hook registered only; no natural call observed';
   if (contaminated) naturalObservationStatus = `${naturalObservationStatus}; contaminated evidence does not qualify`;
 
   let writeApplyStatus = 'no official apply behavior identified';
-  if (OFFICIAL_APPLY_FUNCTIONS.test(entry.member || '')) writeApplyStatus = 'plausible official apply candidate; passive observation only; call safety unproven';
-  else if (/^OnRep_|Refresh.*UI|InventoryEvent/i.test(entry.member || '')) writeApplyStatus = 'possible official UI/replication follow-up; invocation safety unproven';
+  if (OFFICIAL_APPLY_FUNCTIONS.test(entry.member || '')) writeApplyStatus = 'plausible official apply candidate; requires a future isolated safe method; normal-mode hooks/calls disabled';
+  else if (/^OnRep_|Refresh.*UI|InventoryEvent/i.test(entry.member || '')) writeApplyStatus = 'possible official UI/replication follow-up; current hook method and invocation remain disabled';
   else if (rowType === 'property' || rowType === 'struct field') writeApplyStatus = 'raw write forbidden; seek official function/event alternative';
 
   let safetyClassification = 'untested-read-only-candidate';
@@ -956,9 +972,10 @@ function statusFields(entry, rowType, records, policy) {
   else if (contaminated) safetyClassification = 'dirty-evidence';
   else if (unsupported) safetyClassification = 'explicitly-unsupported';
   else if (safe) safetyClassification = 'runtime-safe-read-only';
-  else if (runtimeDiscovered) safetyClassification = 'passive-reflection-only-needs-coverage';
-  else if (['function', 'RPC', 'OnRep', 'multicast', 'event'].includes(rowType)) safetyClassification = 'passive-observation-only';
+  else if (runtimeDiscovered) safetyClassification = 'research-only-disabled-runtime-discovery';
+  else if (exactCallCandidate) safetyClassification = 'research-only-disabled-current-hook-method';
   else if (/ArrayProperty|MapProperty|SetProperty|StructProperty/.test(entry.dumpType || '')) safetyClassification = 'staged-read-required';
+  if (currentHookCrashContext) safetyClassification = 'crash-suspect-current-hook-method-disabled';
 
   let coverageDisposition = 'needs-coverage';
   if (unsupported && !contaminated) coverageDisposition = 'unsupported';
@@ -968,15 +985,18 @@ function statusFields(entry, rowType, records, policy) {
   }
 
   let nextRequiredObservation = 'Capture a clean, scoped read in stable host and joined-client contexts, then repeat across lifecycle transitions.';
-  if (['function', 'RPC', 'OnRep', 'multicast', 'event'].includes(rowType)) {
+  if (exactCallCandidate) {
     nextRequiredObservation = natural
-      ? 'Correlate redacted arguments with pre/post state, authority, remote visibility, lifecycle, UI follow-up, and persistence without calling the function.'
-      : 'Trigger this behavior naturally and capture the passive hook, redacted arguments, pre/post state, authority, lifecycle, UI follow-up, and remote visibility.';
+      ? 'Preserve the prior observation and correlate hook-free state snapshots; any new exact-call or argument work requires a separately reviewed isolated method.'
+      : 'Use hook-free state correlation where possible. Exact-call and argument coverage requires a separately reviewed isolated method; do not enable normal-mode passive hooks.';
   } else if (unsupported && !contaminated) nextRequiredObservation = 'None unless a separately reviewed safe official alternative becomes available.';
   else if (safe) nextRequiredObservation = 'Repeat the proven read on host and joined client, check peer visibility, and cover join/travel/death/respawn/reconnect as applicable.';
   if (contaminated) nextRequiredObservation = crashSuspected
     ? 'Repeat only after a clean restart and stable dwell; isolate the crash-suspect path without writes, RPC calls, stale references, or unsafe hooks.'
     : 'Repeat in a clean stable session with selected/observed roles aligned and all read-only safety flags intact.';
+  if (currentHookCrashContext) {
+    nextRequiredObservation = 'Do not hook this path with the current method. Use hook-free state correlation; exact-call research requires a separately reviewed isolated mechanism after the 2026-07-10 crash incident.';
+  }
 
   return {
     readStatus,
@@ -1605,7 +1625,10 @@ function hookDescriptors(rows) {
       row.hookDisposition = 'excluded-raw-identity';
       continue;
     }
-    row.hookDisposition = 'included-passive-observation';
+    const crashContext = CURRENT_HOOK_METHOD_CRASH_CONTEXTS.has(row.symbolPath);
+    row.hookDisposition = crashContext
+      ? 'research-only-disabled-crash-suspect-current-method'
+      : 'research-only-disabled-current-hook-method';
     const fields = PRE_POST_FIELDS[row.category] || PRE_POST_FIELDS['player-runtime-state'];
     hooks.push({
       id: `hook-${slug(row.owner)}-${slug(row.member)}`,
@@ -1616,11 +1639,16 @@ function hookDescriptors(rows) {
       type: row.type,
       argumentSchema: row.argumentSchema || [],
       checklistLinks: row.checklistLinkage,
-      safetyClassification: 'passive-observation-only',
+      safetyClassification: crashContext
+        ? 'crash-suspect-current-hook-method-disabled'
+        : 'research-only-disabled-current-hook-method',
       preStateFields: fields,
       postStateFields: fields,
-      initiator: 'vanilla-passive-only',
-      callPolicy: 'observe-only-never-invoke',
+      initiator: 'disabled-research-candidate',
+      callPolicy: 'disabled-do-not-register-or-invoke',
+      normalModeEnabled: false,
+      researchOnly: true,
+      knownCrashContext: crashContext,
       captureTiming: 'pre-and-post-where-supported',
       owningPlayerStateFingerprint: true,
       lifecycleGenerationRequired: true,
@@ -1762,8 +1790,8 @@ function buildProfile(hooks, catalogHash, generatedAt, rows = []) {
     name: 'CrabSync Full Observe',
     generatedAt,
     catalogHash,
-    mode: 'passive-observation',
-    description: 'One maximum-observation, read-only campaign with all catalog-approved passive hooks active and independently gated staged inventory reads.',
+    mode: 'snapshot-observation',
+    description: 'A snapshot-first, read-only campaign. Normal Play Guide sessions register no gameplay or lifecycle hooks, perform no runtime discovery, and leave staged inventory research disabled.',
     runtimeContract: { ...RUNTIME_CONTRACT },
     safety: {
       writesEnabled: false, rpcInvocationEnabled: false, propertyMutationEnabled: false,
@@ -1771,9 +1799,18 @@ function buildProfile(hooks, catalogHash, generatedAt, rows = []) {
       syntheticValuesEnabled: false, staleUObjectRetentionEnabled: false,
       passiveHooksDoNotAuthorizeCalls: true, evidenceFlushAfterMeaningfulRow: true
     },
+    normalMode: {
+      snapshotSamplerEnabled: true,
+      gameplayHooksEnabled: false,
+      lifecycleHooksEnabled: false,
+      runtimeDiscoveryEnabled: false,
+      inventoryEscalationEnabled: false,
+      guiOwnsChecklistQualification: true
+    },
     passiveHooks: {
-      enabled: true,
-      registerTogether: true,
+      enabled: false,
+      registerTogether: false,
+      researchOnly: true,
       globalEvidenceRowCap: RUNTIME_CONTRACT.fullObserveHookGlobalRowCap,
       perDescriptorEvidenceRowCap: RUNTIME_CONTRACT.fullObserveHookPerDescriptorRowCap,
       minimumObservationIntervalSeconds: RUNTIME_CONTRACT.fullObserveHookMinIntervalSeconds,
@@ -1781,7 +1818,7 @@ function buildProfile(hooks, catalogHash, generatedAt, rows = []) {
       descriptors: hooks
     },
     inventoryEscalation: {
-      enabled: true, persistProgress: true, resumeAfterRestart: true, independentCategoryCircuitBreakers: true,
+      enabled: false, researchOnly: true, persistProgress: true, resumeAfterRestart: true, independentCategoryCircuitBreakers: true,
       maximumInventoryEntriesPerCategory: RUNTIME_CONTRACT.fullObserveMaxInventoryItems,
       maximumEnhancementValuesPerItem: RUNTIME_CONTRACT.fullObserveMaxEnhancements,
       maximumStageRowsPerCategory: RUNTIME_CONTRACT.fullObserveMaxStageRowsPerCategory,
@@ -1793,6 +1830,8 @@ function buildProfile(hooks, catalogHash, generatedAt, rows = []) {
       stages: inventoryStages()
     },
     runtimeDiscovery: {
+      enabled: false,
+      researchOnly: true,
       readOnly: true,
       enumerateArbitraryUObjects: false,
       nativeClassRoots: [
@@ -1814,13 +1853,14 @@ function buildProfile(hooks, catalogHash, generatedAt, rows = []) {
       reflectionScope: 'exact-class-roots-only',
       excludedGeneratedFunctions: ['ExecuteUbergraph_*', 'EvaluateGraphExposedInputs_*', 'AnimGraph'],
       newlyDiscoveredCandidatesDisposition: 'needs-coverage',
-      requireExactResolvedUFunctionPathBeforeHook: true
+      normalHookRegistrationProhibited: true,
+      requireExactResolvedUFunctionPathBeforeAnyFutureIsolatedMethod: true
     },
     lifecycle: {
       invalidateReferencesOnGenerationChange: true,
       gatedStates: ['startup', 'menu', 'lobby', 'loading', 'travel', 'respawn', 'join', 'disconnect', 'unstable-playerstate'],
-      stableSamplesRequiredBeforeStagedRead: RUNTIME_CONTRACT.fullObserveStableSamplesRequired,
-      stableDwellSecondsRequiredBeforeStagedRead: RUNTIME_CONTRACT.fullObserveStableDwellSeconds
+      stableSamplesRequiredBeforeStagedRead: RUNTIME_CONTRACT.snapshotStableSamplesRequired,
+      stableDwellSecondsRequiredBeforeStagedRead: RUNTIME_CONTRACT.snapshotStableDwellSeconds
     }
   };
 }
@@ -1842,7 +1882,7 @@ function mdEscape(value) {
 function renderDocumentation(catalog) {
   const lines = [];
   lines.push('# CrabSync Evidence Coverage Catalog', '');
-  lines.push('This catalog is generated from the complete supplied UE4SS object dump, all checked-in RuntimeProbe documentation and JSONL evidence, and explicitly labeled legacy reference notes. Object-dump presence is not runtime proof. Passive hook registration is not a natural observation and never authorizes calling a UFunction.', '');
+  lines.push('This catalog is generated from the complete supplied UE4SS object dump, all checked-in RuntimeProbe documentation and JSONL evidence, and explicitly labeled legacy reference notes. Object-dump presence is not runtime proof. Normal Play Guide mode is hook-free; exact-call descriptors are disabled research records and never authorize registration or invocation.', '');
   lines.push('## Provenance', '');
   const dump = catalog.sourceProvenance.objectDump;
   lines.push(`- Object dump: \`${dump.logicalName}\`, ${dump.lineCount.toLocaleString()} lines, ${dump.byteSize.toLocaleString()} bytes, SHA-256 \`${dump.sha256}\`.`);
@@ -1854,7 +1894,7 @@ function renderDocumentation(catalog) {
   lines.push('## Coverage Summary', '');
   lines.push(`- Relevant rows: ${catalog.summary.relevantRowCount}`);
   lines.push(`- Needs Coverage: ${catalog.summary.needsCoverageCount}`);
-  lines.push(`- Passive exact-path hook descriptors: ${catalog.summary.passiveHookCount}`);
+  lines.push(`- Disabled exact-call research descriptors: ${catalog.summary.passiveHookCount}`);
   lines.push(`- Categories: ${catalog.summary.categoryCount}`, '');
   lines.push('| Category | Rows | Needs Coverage |');
   lines.push('|---|---:|---:|');
@@ -1873,7 +1913,8 @@ function renderDocumentation(catalog) {
   lines.push('- Keys are intentionally excluded by product policy.');
   lines.push('- HUD `ReceiveDrawHUD` and unscoped `FindFirstOf(CrabHC)` are explicitly rejected unsafe paths.');
   lines.push('- Raw property writes, inventory reconstruction, nested metadata writes, carrier hijacking, and mutating RPC calls remain forbidden in RuntimeProbe.');
-  lines.push('- Official functions are passive candidates only. Natural observation still does not prove mimic/call safety.');
+  lines.push('- Exact-call research descriptors are disabled in normal mode. The current passive-hook method is not recommended after the 2026-07-10 crash incident.');
+  lines.push('- Official functions remain catalog candidates only. State correlation does not prove mimic/call safety.');
   lines.push('- Unknown and untested rows are retained in Needs Coverage; they are never silently converted to defaults.', '');
   lines.push('## Needs Coverage View', '');
   lines.push('| Category | Symbol/path | Type | Source | Read | Natural observation | Args/metadata | Authority/direction | Lifecycle | Persistence/UI | Write/apply | Safety | Next observation | Checklist |');
@@ -2015,17 +2056,46 @@ function validateCatalog(catalog, checklist, profile) {
     if (hookIds.has(hook.id)) errors.push(`duplicate hook id: ${hook.id}`);
     hookIds.add(hook.id);
     if (hook.hookPath !== hook.symbolPath || !/^\/(?:Script|Game)\//.test(hook.hookPath)) errors.push(`${hook.id}: hook path is not exact`);
-    if (hook.safetyClassification !== 'passive-observation-only' || hook.callPolicy !== 'observe-only-never-invoke') errors.push(`${hook.id}: unsafe hook policy`);
+    if (!['research-only-disabled-current-hook-method', 'crash-suspect-current-hook-method-disabled'].includes(hook.safetyClassification)
+        || hook.callPolicy !== 'disabled-do-not-register-or-invoke'
+        || hook.normalModeEnabled !== false || hook.researchOnly !== true) {
+      errors.push(`${hook.id}: exact-call research descriptor is not disabled`);
+    }
     if (/ReceiveDrawHUD|(?:^|[.:])Keys?(?:$|[.:])|UniqueId|PlayerName/i.test(hook.hookPath)) errors.push(`${hook.id}: forbidden hook included`);
     if (hook.hookPath.startsWith('/Script/Engine.') && !REVIEWED_ENGINE_PASSIVE_HOOKS.has(hook.hookPath)) errors.push(`${hook.id}: unreviewed Engine hook included`);
     if (hook.hookPath.startsWith('/Script/CrabChampions.') && !nativeHookIsMateriallyRelevant({ owner: hook.ownerPath.split('.').pop(), member: hook.hookPath.split(':').pop() })) errors.push(`${hook.id}: irrelevant/high-volume native hook included`);
   }
   const hookPaths = new Set((catalog.hooks || []).map((hook) => hook.hookPath));
-  for (const requiredPath of REQUIRED_PASSIVE_HOOKS) if (!hookPaths.has(requiredPath)) errors.push(`required passive hook missing: ${requiredPath}`);
+  for (const requiredPath of REQUIRED_PASSIVE_HOOKS) if (!hookPaths.has(requiredPath)) errors.push(`required exact-call research candidate missing: ${requiredPath}`);
+  for (const crashPath of CURRENT_HOOK_METHOD_CRASH_CONTEXTS) {
+    const row = (catalog.rows || []).find((candidate) => candidate.symbolPath === crashPath);
+    const hook = (catalog.hooks || []).find((candidate) => candidate.hookPath === crashPath);
+    if (!row || row.hookDisposition !== 'research-only-disabled-crash-suspect-current-method'
+        || !/Do not hook this path/.test(row.nextRequiredObservation || '')) {
+      errors.push(`known crash-context path is not explicitly disabled: ${crashPath}`);
+    }
+    if (!hook || hook.knownCrashContext !== true || hook.normalModeEnabled !== false) {
+      errors.push(`known crash-context descriptor is not disabled: ${crashPath}`);
+    }
+  }
+  if ((catalog.rows || []).some((row) => row.hookDisposition === 'included-passive-observation')) {
+    errors.push('catalog still includes normal passive-hook dispositions');
+  }
+  if ((catalog.rows || []).some((row) => /capture the passive hook/i.test(row.nextRequiredObservation || ''))) {
+    errors.push('catalog still recommends capturing a passive hook');
+  }
   for (const row of catalog.rows || []) {
     if (['function', 'RPC', 'OnRep', 'multicast', 'event'].includes(row.type) && row.sourceDetail.objectDump && !row.hookDisposition) errors.push(`${row.id}: UFunction lacks explicit hook disposition`);
   }
   if (profile?.safety?.writesEnabled !== false || profile?.safety?.rpcInvocationEnabled !== false || profile?.safety?.propertyMutationEnabled !== false || profile?.safety?.hudHookEnabled !== false || profile?.safety?.rawIdentityEnabled !== false) errors.push('profile safe defaults are not all false');
+  if (profile?.mode !== 'snapshot-observation' || profile?.normalMode?.snapshotSamplerEnabled !== true ||
+      profile?.normalMode?.gameplayHooksEnabled !== false || profile?.normalMode?.lifecycleHooksEnabled !== false ||
+      profile?.normalMode?.runtimeDiscoveryEnabled !== false || profile?.normalMode?.inventoryEscalationEnabled !== false ||
+      profile?.normalMode?.guiOwnsChecklistQualification !== true) errors.push('profile normal mode is not snapshot-first and hook-free');
+  if (profile?.passiveHooks?.enabled !== false || profile?.passiveHooks?.registerTogether !== false ||
+      profile?.passiveHooks?.researchOnly !== true || profile?.inventoryEscalation?.enabled !== false ||
+      profile?.inventoryEscalation?.researchOnly !== true || profile?.runtimeDiscovery?.enabled !== false ||
+      profile?.runtimeDiscovery?.researchOnly !== true) errors.push('profile research instrumentation is enabled in normal mode');
   for (const [field, expected] of Object.entries(RUNTIME_CONTRACT)) {
     if (profile?.runtimeContract?.[field] !== expected) errors.push(`profile runtime contract mismatch: ${field} must be ${expected}`);
   }
@@ -2034,8 +2104,8 @@ function validateCatalog(catalog, checklist, profile) {
       profile?.inventoryEscalation?.maximumEnhancementValuesPerItem !== RUNTIME_CONTRACT.fullObserveMaxEnhancements ||
       profile?.inventoryEscalation?.maximumStageRowsPerCategory !== RUNTIME_CONTRACT.fullObserveMaxStageRowsPerCategory ||
       profile?.inventoryEscalation?.cleanSamplesRequiredBeforeStageAdvance !== RUNTIME_CONTRACT.fullObserveCleanSamplesRequired) errors.push('profile staged-inventory caps/clean-sample contract drifted from runtime defaults');
-  if (profile?.lifecycle?.stableSamplesRequiredBeforeStagedRead !== RUNTIME_CONTRACT.fullObserveStableSamplesRequired ||
-      profile?.lifecycle?.stableDwellSecondsRequiredBeforeStagedRead !== RUNTIME_CONTRACT.fullObserveStableDwellSeconds) errors.push('profile lifecycle stability contract drifted from runtime defaults');
+  if (profile?.lifecycle?.stableSamplesRequiredBeforeStagedRead !== RUNTIME_CONTRACT.snapshotStableSamplesRequired ||
+      profile?.lifecycle?.stableDwellSecondsRequiredBeforeStagedRead !== RUNTIME_CONTRACT.snapshotStableDwellSeconds) errors.push('profile lifecycle stability contract drifted from snapshot runtime defaults');
   if (profile?.runtimeDiscovery?.maximumResolvedClassesPerGeneration !== RUNTIME_CONTRACT.maximumResolvedClassesPerGeneration ||
       profile?.runtimeDiscovery?.maximumFunctionsPerResolvedClass !== RUNTIME_CONTRACT.maximumFunctionsPerResolvedClass) errors.push('profile runtime-discovery caps drifted from runtime defaults');
   if (profile?.passiveHooks?.globalEvidenceRowCap !== RUNTIME_CONTRACT.fullObserveHookGlobalRowCap ||
@@ -2045,7 +2115,8 @@ function validateCatalog(catalog, checklist, profile) {
   const runtimeConfigPath = path.join(ROOT, 'client', 'Mods', 'CrabRuntimeProbe', 'Scripts', 'config.txt');
   if (fs.existsSync(runtimeConfigPath)) {
     const runtimeConfigText = fs.readFileSync(runtimeConfigPath, 'utf8');
-    for (const [field, expected] of Object.entries(RUNTIME_CONTRACT).filter(([name]) => name.startsWith('fullObserve'))) {
+    for (const [field, expected] of Object.entries(RUNTIME_CONTRACT)
+      .filter(([name]) => name.startsWith('fullObserve') || name.startsWith('snapshot'))) {
       const match = runtimeConfigText.match(new RegExp(`^${field}\\s*=\\s*(\\d+)\\s*$`, 'm'));
       if (!match || Number(match[1]) !== expected) errors.push(`runtime config/profile contract mismatch: ${field} must be ${expected}`);
     }
@@ -2330,11 +2401,21 @@ function runSelfTests() {
   test('generated profile exactly mirrors bounded runtime defaults', () => {
     const profile = buildProfile([], '0'.repeat(64), '2026-01-01T00:00:00.000Z', []);
     assert.deepStrictEqual(profile.runtimeContract, { ...RUNTIME_CONTRACT });
+    assert.strictEqual(profile.mode, 'snapshot-observation');
+    assert.strictEqual(profile.normalMode.snapshotSamplerEnabled, true);
+    assert.strictEqual(profile.normalMode.gameplayHooksEnabled, false);
+    assert.strictEqual(profile.normalMode.lifecycleHooksEnabled, false);
+    assert.strictEqual(profile.normalMode.guiOwnsChecklistQualification, true);
+    assert.strictEqual(profile.passiveHooks.enabled, false);
+    assert.strictEqual(profile.passiveHooks.registerTogether, false);
+    assert.strictEqual(profile.inventoryEscalation.enabled, false);
+    assert.strictEqual(profile.runtimeDiscovery.enabled, false);
     assert.strictEqual(profile.inventoryEscalation.maximumInventoryEntriesPerCategory, 32);
     assert.strictEqual(profile.inventoryEscalation.maximumEnhancementValuesPerItem, 16);
     assert.strictEqual(profile.inventoryEscalation.maximumStageRowsPerCategory, 256);
     assert.strictEqual(profile.inventoryEscalation.cleanSamplesRequiredBeforeStageAdvance, 3);
-    assert.strictEqual(profile.lifecycle.stableSamplesRequiredBeforeStagedRead, 3);
+    assert.strictEqual(profile.lifecycle.stableSamplesRequiredBeforeStagedRead, 10);
+    assert.strictEqual(profile.lifecycle.stableDwellSecondsRequiredBeforeStagedRead, 30);
     assert.strictEqual(profile.runtimeDiscovery.maximumResolvedClassesPerGeneration, 128);
     assert.strictEqual(profile.runtimeDiscovery.maximumFunctionsPerResolvedClass, 128);
   });

@@ -59,7 +59,7 @@
                                 <Border Grid.Column="1" Background="{StaticResource AccentDarkBrush}" CornerRadius="16"
                                         Padding="13,7" VerticalAlignment="Center" Margin="16,0,0,0">
                                     <TextBlock Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold"
-                                               Text="Read-only • doesn’t change your game"/>
+                                               Text="Hook-free • read-only"/>
                                 </Border>
                             </Grid>
 
@@ -280,7 +280,7 @@
             <StackPanel>
                 <TextBlock FontSize="27" FontWeight="SemiBold" Text="CrabSync evidence campaign"/>
                 <TextBlock Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0"
-                           Text="Exhaustive, catalog-driven, passive observation - writes, RPC calls, mutation, HUD hooks, and raw identity stay disabled"/>
+                           Text="Exhaustive catalog with hook-free snapshot observation - writes, RPC calls, mutation, runtime hooks, and raw identity stay disabled"/>
             </StackPanel>
             <Border Grid.Column="1" Background="{StaticResource AccentDarkBrush}" CornerRadius="16" Padding="14,7" VerticalAlignment="Center">
                 <TextBlock Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" Text="READ-ONLY SAFETY MODEL"/>
@@ -385,18 +385,21 @@
                                         </Border>
                                     </WrapPanel>
                                     <TextBlock Foreground="{StaticResource MutedBrush}" Margin="0,12,0,0" TextWrapping="Wrap"
-                                               Text="A registered hook is only a readiness signal. Checklist completion requires qualifying natural gameplay evidence, and catalog completion requires a clean terminal disposition for every material row."/>
+                                               Text="Normal Play Guide monitoring is hook-free. Stable state changes can complete player-facing tasks; exact RPC, OnRep, multicast, argument, and apply-path rows remain in Needs Coverage until a separate expert-safe method exists."/>
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource Card}">
                                 <StackPanel>
                                     <TextBlock FontSize="18" FontWeight="SemiBold" Text="Safety circuit breakers"/>
-                                    <UniformGrid Columns="5" Margin="0,13,0,0">
+                                    <UniformGrid Columns="4" Margin="0,13,0,0">
                                         <TextBlock FontSize="10" Margin="0,0,6,0" Foreground="{Binding Snapshot.Safety.WritesDisabled, Converter={StaticResource StatusBrushConverter}}"><Run Text="Writes disabled: "/><Run Text="{Binding Snapshot.Safety.WritesDisabled, Mode=OneWay}"/></TextBlock>
                                         <TextBlock FontSize="10" Margin="0,0,6,0" Foreground="{Binding Snapshot.Safety.RpcsDisabled, Converter={StaticResource StatusBrushConverter}}"><Run Text="RPC calls disabled: "/><Run Text="{Binding Snapshot.Safety.RpcsDisabled, Mode=OneWay}"/></TextBlock>
                                         <TextBlock FontSize="10" Margin="0,0,6,0" Foreground="{Binding Snapshot.Safety.MutationDisabled, Converter={StaticResource StatusBrushConverter}}"><Run Text="Mutation disabled: "/><Run Text="{Binding Snapshot.Safety.MutationDisabled, Mode=OneWay}"/></TextBlock>
                                         <TextBlock FontSize="10" Margin="0,0,6,0" Foreground="{Binding Snapshot.Safety.HudHookDisabled, Converter={StaticResource StatusBrushConverter}}"><Run Text="HUD hook disabled: "/><Run Text="{Binding Snapshot.Safety.HudHookDisabled, Mode=OneWay}"/></TextBlock>
                                         <TextBlock FontSize="10" Foreground="{Binding Snapshot.Safety.RawIdentityDisabled, Converter={StaticResource StatusBrushConverter}}"><Run Text="Raw identity disabled: "/><Run Text="{Binding Snapshot.Safety.RawIdentityDisabled, Mode=OneWay}"/></TextBlock>
+                                        <TextBlock FontSize="10" Margin="0,6,6,0" Foreground="{Binding Snapshot.Safety.HooksDisabled, Converter={StaticResource StatusBrushConverter}}"><Run Text="Runtime hooks disabled: "/><Run Text="{Binding Snapshot.Safety.HooksDisabled, Mode=OneWay}"/></TextBlock>
+                                        <TextBlock FontSize="10" Margin="0,6,6,0" Foreground="{Binding Snapshot.Safety.RuntimeDiscoveryDisabled, Converter={StaticResource StatusBrushConverter}}"><Run Text="Runtime discovery disabled: "/><Run Text="{Binding Snapshot.Safety.RuntimeDiscoveryDisabled, Mode=OneWay}"/></TextBlock>
+                                        <TextBlock FontSize="10" Margin="0,6,6,0" Foreground="{Binding Snapshot.Safety.InventoryStagesDisabled, Converter={StaticResource StatusBrushConverter}}"><Run Text="Inventory stages disabled: "/><Run Text="{Binding Snapshot.Safety.InventoryStagesDisabled, Mode=OneWay}"/></TextBlock>
                                     </UniformGrid>
                                     <TextBlock Margin="0,10,0,0"><Run Foreground="{StaticResource MutedBrush}" Text="Inventory depth: "/><Run Text="{Binding InventoryDepthSummary, Mode=OneWay}"/></TextBlock>
                                     <TextBlock Margin="0,5,0,0" Text="{Binding CircuitBreakerSummary}" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap"/>

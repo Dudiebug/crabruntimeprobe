@@ -101,9 +101,24 @@ coverage catalog, and reports. Play Guide is only a presentation over the
 authoritative checklist; it does not change evidence rules or imply that
 CrabSync is ready.
 
+Normal Play Guide monitoring is snapshot-first and hook-free: it registers no
+gameplay, RPC, OnRep, multicast, HUD, or lifecycle hooks, performs no runtime
+UFunction discovery, and never calls or writes game behavior. The in-game side
+only samples a small reviewed set of stable PlayerState fields. The desktop GUI
+replays those append-only snapshots and qualifies explicit before/after rules.
+Exact-call, argument, replication, persistence, UI-follow-up, inventory-internal,
+and official apply candidates remain visible in **Needs Coverage**; a state
+change is not presented as proof of the exact function that caused it.
+
+Do not use or resume the v1.0.2 full-observe hook profile. Open the replacement
+dashboard and start/prepare the Play Guide once before launching the game; this
+reinstalls the payload and rewrites every legacy research gate to the hook-free
+snapshot profile. The evidence and containment decision are recorded in the
+[2026-07-10 hook observer incident](docs/INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md).
+
 See the [full campaign guide](docs/CRABSYNC_FULL_CAMPAIGN_GUIDE.md) for the exact
 multiplayer actions, status meanings, crash recovery, coverage rules, and safety
-boundary. A successful passive campaign is read/natural-observation evidence;
+boundary. A successful snapshot campaign is read/state-transition evidence;
 it is never write/apply proof.
 
 ## Evidence-driven documentation pipeline
@@ -455,8 +470,9 @@ node tools/generate_crabsync_coverage_catalog.js --validate
 ```
 
 The full scan hashes and reads every dump line, merges all checked-in docs and
-runtime evidence, and generates the dashboard JSON/CSV/Markdown plus the exact
-Lua passive-hook allowlist. Missing dump provenance is an error, not a silent
+runtime evidence, and generates the dashboard JSON/CSV/Markdown plus disabled
+exact-call research descriptors. Normal mode never registers those descriptors.
+Missing dump provenance is an error, not a silent
 skip. After importing a new evidence session, refresh runtime statuses without
 changing the recorded dump denominator:
 

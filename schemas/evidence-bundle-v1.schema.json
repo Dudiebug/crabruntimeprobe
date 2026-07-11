@@ -50,14 +50,20 @@
         "rpcCallsDisabled",
         "mutationDisabled",
         "rawIdentityDisabled",
-        "hudHookDisabled"
+        "hudHookDisabled",
+        "hooksDisabled",
+        "runtimeDiscoveryDisabled",
+        "inventoryStagesDisabled"
       ],
       "properties": {
-        "writesDisabled": { "const": true },
-        "rpcCallsDisabled": { "const": true },
-        "mutationDisabled": { "const": true },
-        "rawIdentityDisabled": { "const": true },
-        "hudHookDisabled": { "const": true }
+        "writesDisabled": { "type": "boolean" },
+        "rpcCallsDisabled": { "type": "boolean" },
+        "mutationDisabled": { "type": "boolean" },
+        "rawIdentityDisabled": { "type": "boolean" },
+        "hudHookDisabled": { "type": "boolean" },
+        "hooksDisabled": { "type": "boolean" },
+        "runtimeDiscoveryDisabled": { "type": "boolean" },
+        "inventoryStagesDisabled": { "type": "boolean" }
       }
     },
     "manifestSelfExcluded": { "const": true },

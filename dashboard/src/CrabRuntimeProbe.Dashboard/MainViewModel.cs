@@ -24,10 +24,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly SteamGameLocator _gameLocator = new();
     private readonly DashboardResourceLocator _resourceLocator = new();
     private readonly LiveStatusReader _statusReader = new();
+    private readonly SnapshotEvidenceService _snapshotEvidenceService = new();
     private readonly CapabilityReadinessService _readinessService = new();
     private readonly PlayGuideReducer _playGuideReducer = new();
     private readonly GameProcessExitDetector _gameExitDetector = new();
     private readonly CancellationTokenSource _lifetime = new();
+    private SnapshotReplayResult _lastGoodSnapshotReplay = SnapshotReplayResult.Empty;
+    private string _lastGoodSnapshotScope = string.Empty;
     private CampaignService? _campaignService;
     private LocalCampaignState? _campaign;
     private LiveStatusReadResult _status = new(
@@ -383,11 +386,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             }
             else if (Campaign is not null)
             {
-                Status = await _statusReader.ReadLatestAsync(Campaign.StatusDirectory, cancellationToken: _lifetime.Token);
+                Status = await ReadCampaignStatusAsync(Campaign, _lifetime.Token);
             }
 
             RefreshChecklist(Status.Snapshot);
-            Activity = _demo ? "Demo mode - no game files are changed" : "Ready - passive observation only";
+            Activity = _demo ? "Demo mode - no game files are changed" : "Ready - hook-free snapshot observation";
             RaiseSummaryProperties();
             _ = MonitorAsync(definitions, _lifetime.Token);
         }
@@ -427,15 +430,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             if (Campaign is null)
-                Campaign = await RequireCampaignService().ResumeAsync(_lifetime.Token)
+                Campaign = await RequireCampaignService().ResumeAsync(_lifetime.Token, Environment.ProcessPath)
                            ?? throw new InvalidOperationException("Prepare a campaign first.");
             var installation = RequireInstallation();
             var process = new GameProcessService().Launch(installation);
-            _monitoredProcess = process;
+            var processId = process.Id;
+            ReplaceMonitoredProcess(process);
             _localGameRunning = true;
             _gameExitDetector.Begin(DateTimeOffset.UtcNow, processSeen: true);
             Campaign = await RequireCampaignService().MarkMonitoringAsync(Campaign, _lifetime.Token);
-            Activity = $"Monitoring Crab Champions process {process.Id} - make only natural gameplay actions";
+            Activity = $"Monitoring Crab Champions process {processId} - hook-free snapshots only";
         }
         catch (Exception ex) { ShowError(ex); }
     }
@@ -461,11 +465,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 return;
             }
 
-            _monitoredProcess = process;
+            var processId = process.Id;
+            ReplaceMonitoredProcess(process);
             _localGameRunning = true;
             _gameExitDetector.Begin(DateTimeOffset.UtcNow, processSeen: true);
             Campaign = await RequireCampaignService().MarkMonitoringAsync(Campaign, _lifetime.Token);
-            Activity = $"Crab Champions opened the dashboard - monitoring process {process.Id}";
+            Activity = $"Crab Champions opened the dashboard - hook-free snapshot monitoring on process {processId}";
         }
         catch (Exception ex) { ShowError(ex); }
     }
@@ -474,7 +479,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
-            Campaign = await RequireCampaignService().ResumeAsync(_lifetime.Token)
+            Campaign = await RequireCampaignService().ResumeAsync(_lifetime.Token, Environment.ProcessPath)
                        ?? throw new InvalidOperationException("No valid prepared campaign is available to resume.");
             SelectedRole = Campaign.Role;
             CampaignName = Campaign.CampaignName;
@@ -563,7 +568,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             await RequireCampaignService().ResetAsync(Campaign, _lifetime.Token);
             Campaign = null;
-            _monitoredProcess = null;
+            ReplaceMonitoredProcess(null);
             _gameExitDetector.Reset();
             Status = new LiveStatusReadResult(LiveStatusSnapshot.Empty, false, true, false,
                 "No active campaign", DateTimeOffset.UtcNow);
@@ -582,7 +587,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             try
             {
                 var observedAt = DateTimeOffset.UtcNow;
-                var next = await _statusReader.ReadLatestAsync(Campaign.StatusDirectory, cancellationToken: token);
+                var next = await ReadCampaignStatusAsync(Campaign, token);
                 var installation = _gameLocator.ValidateSelectedDirectory(GameDirectory);
                 var runningProcess = installation is null ? null : new GameProcessService().FindRunning(installation);
                 var running = runningProcess is not null;
@@ -595,7 +600,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 });
 
                 if (installation is null) continue;
-                if (runningProcess is not null) _monitoredProcess = runningProcess;
+                if (runningProcess is not null) ReplaceMonitoredProcess(runningProcess);
                 if (_gameExitDetector.Observe(running, observedAt)
                     && !_autoCollected && Campaign.Phase == "monitoring")
                 {
@@ -628,6 +633,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                             ? "Game exited unexpectedly - crash-suspect bundle exported"
                             : "Game exited - evidence bundle exported automatically";
                     });
+                    ReplaceMonitoredProcess(null);
                 }
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
@@ -697,6 +703,89 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private CampaignService RequireCampaignService() =>
         _campaignService ?? throw new InvalidOperationException("Dashboard resources are not initialized.");
+
+    private void ReplaceMonitoredProcess(Process? replacement)
+    {
+        if (ReferenceEquals(_monitoredProcess, replacement)) return;
+        if (_monitoredProcess is not null && replacement is not null)
+        {
+            try
+            {
+                if (_monitoredProcess.Id == replacement.Id)
+                {
+                    replacement.Dispose();
+                    return;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Replace an exited/unassociated wrapper below.
+            }
+        }
+        _monitoredProcess?.Dispose();
+        _monitoredProcess = replacement;
+    }
+
+    private async Task<LiveStatusReadResult> ReadCampaignStatusAsync(
+        LocalCampaignState campaign,
+        CancellationToken cancellationToken)
+    {
+        var status = await _statusReader.ReadLatestAsync(
+            campaign.StatusDirectory,
+            cancellationToken: cancellationToken);
+        try
+        {
+            var snapshots = await _snapshotEvidenceService.LoadAsync(campaign, cancellationToken);
+            var scope = SnapshotReplayScope.FromCampaign(campaign);
+            var scopeKey = $"{scope.SessionId}|{scope.CampaignGeneration}|{scope.MachineId}";
+            if (!_lastGoodSnapshotScope.Equals(scopeKey, StringComparison.Ordinal))
+            {
+                _lastGoodSnapshotScope = scopeKey;
+                _lastGoodSnapshotReplay = SnapshotReplayResult.Empty;
+            }
+            if (snapshots.Replay.Rejections.Count > 0)
+            {
+                status = _snapshotEvidenceService.Merge(status, _lastGoodSnapshotReplay, scope);
+                var detail = string.Join(", ", snapshots.Replay.Rejections
+                    .Take(3)
+                    .Select(item => item.Code));
+                var warning = $"Snapshot evidence rejected ({snapshots.Replay.Rejections.Count}): {detail}";
+                return status with
+                {
+                    Snapshot = status.Snapshot with
+                    {
+                        DirtyEvidence = true,
+                        EvidenceHealth = status.Snapshot.EvidenceHealth with
+                        {
+                            State = "snapshot-rejected",
+                            RejectedRows = status.Snapshot.EvidenceHealth.RejectedRows
+                                           + snapshots.Replay.Rejections.Count,
+                            DirtyRows = status.Snapshot.EvidenceHealth.DirtyRows + 1,
+                            Detail = warning
+                        }
+                    },
+                    Error = string.IsNullOrWhiteSpace(status.Error)
+                        ? warning
+                        : $"{status.Error}; {warning}"
+                };
+            }
+            _lastGoodSnapshotReplay = snapshots.Replay;
+            return _snapshotEvidenceService.Merge(status, snapshots.Replay, scope);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (IOException)
+        {
+            // The append-only file may rotate between discovery and open. The next monitor tick retries.
+            return status;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return status;
+        }
+    }
 
     private bool FilterCoverage(object value) => value is CoverageRow row && (!NeedsCoverageOnly || row.NeedsCoverage);
 
@@ -807,6 +896,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public void Dispose()
     {
         _lifetime.Cancel();
+        ReplaceMonitoredProcess(null);
         _lifetime.Dispose();
     }
 }

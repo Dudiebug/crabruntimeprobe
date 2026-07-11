@@ -78,6 +78,9 @@ if (Test-Path -LiteralPath $BundleRoot) {
 New-Item -ItemType Directory -Force -Path $BundleRoot | Out-Null
 
 try {
+  & node (Join-Path $RepoRoot "tools\generate_crabsync_coverage_catalog.js") --validate
+  if ($LASTEXITCODE -ne 0) { throw "Generated CrabSync catalog/profile validation failed." }
+
   $dashboardProject = Join-Path $RepoRoot "dashboard\src\CrabRuntimeProbe.Dashboard\CrabRuntimeProbe.Dashboard.csproj"
   if (-not (Test-Path -LiteralPath $dashboardProject -PathType Leaf)) {
     throw "Dashboard project is missing: $dashboardProject"
@@ -95,7 +98,11 @@ try {
   foreach ($file in @("LICENSE", "UE4SS-LICENSE.txt", "THIRD_PARTY_NOTICES.md", "README.md")) {
     Copy-RequiredFile -Source (Join-Path $RepoRoot $file) -Destination (Join-Path $BundleRoot $file)
   }
-  foreach ($doc in @("CRABSYNC_FULL_CAMPAIGN_GUIDE.md", "CRABSYNC_COVERAGE_CATALOG.md")) {
+  foreach ($doc in @(
+    "CRABSYNC_FULL_CAMPAIGN_GUIDE.md",
+    "CRABSYNC_COVERAGE_CATALOG.md",
+    "INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md"
+  )) {
     Copy-RequiredFile -Source (Join-Path $RepoRoot "docs\$doc") -Destination (Join-Path $BundleRoot "docs\$doc")
   }
 
@@ -117,6 +124,7 @@ try {
     commit = [string]$commit
     generatedAtUtc = [DateTime]::UtcNow.ToString("o")
     statusSchemaVersion = 1
+    snapshotObservationSchemaVersion = 1
     controlSchemaVersion = 1
     evidenceBundleSchemaVersion = 1
     installTarget = "Crab Champions/CrabChampions/Binaries/Win64"

@@ -185,6 +185,9 @@ public sealed class LiveStatusReader
             Disabled(safetyElement, "mutationDisabled", "noMutation", "mutationEnabled"),
             Disabled(safetyElement, "hudHookDisabled", "noHud", "hudHookEnabled"),
             Disabled(safetyElement, "rawIdentityDisabled", "rawIdentityRedacted", "rawIdentityEnabled"),
+            Bool(safetyElement, "hooksDisabled", false),
+            Bool(safetyElement, "runtimeDiscoveryDisabled", false),
+            Bool(safetyElement, "inventoryStagesDisabled", false),
             Int(safetyElement, "inventoryDepth", 0),
             breakers);
 

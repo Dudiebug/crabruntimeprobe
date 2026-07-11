@@ -83,6 +83,7 @@ local function safetyGates(config)
     allowInventoryArrayCountProbes = config.allowInventoryArrayCountProbes == true,
     allowInventoryElementDataAssetReadProbes = config.allowInventoryElementDataAssetReadProbes == true,
     fullObserveEnabled = config.fullObserveEnabled == true,
+    snapshotSamplerEnabled = config.snapshotSamplerEnabled == true,
     allowPassiveObservationHooks = config.allowPassiveObservationHooks == true,
     allowFullObserveInventoryStages = config.allowFullObserveInventoryStages == true,
     allowFullObserveRuntimeDiscovery = config.allowFullObserveRuntimeDiscovery == true,
@@ -105,7 +106,10 @@ local function unsafeActiveGates(config)
     'allowWriteProbes',
     'allowRpcProbes',
     'allowJoinedClientDeepProbes',
-    'allowUnknownRoleProbes'
+    'allowUnknownRoleProbes',
+    'allowPassiveObservationHooks',
+    'allowFullObserveInventoryStages',
+    'allowFullObserveRuntimeDiscovery'
   }) do
     if gates[key] == true then active[#active + 1] = key end
   end
@@ -141,6 +145,7 @@ local function activeResearchGates(config)
     'allowInventoryArrayCountProbes',
     'allowInventoryElementDataAssetReadProbes',
     'fullObserveEnabled',
+    'snapshotSamplerEnabled',
     'allowPassiveObservationHooks',
     'allowFullObserveInventoryStages',
     'allowFullObserveRuntimeDiscovery',
@@ -236,9 +241,7 @@ function evidenceWriter.new(sessionId, config)
     activeEvidencePath = nil
   }
 
-  function o:writeEvidence(record)
-    if self.config.writeJsonlResults == false then return true end
-    local line = json.encode(withDefaults(record, self.sessionId, self.config))
+  function o:writeEncodedLine(line)
     if self.activeEvidencePath and appendLine(self.activeEvidencePath, line) then return true end
     local primaryCandidate = self.activeEvidencePath == self.evidencePath and self.fallbackEvidencePath or self.evidencePath
     local fallbackCandidate = primaryCandidate == self.evidencePath and self.fallbackEvidencePath or self.evidencePath
@@ -265,6 +268,24 @@ function evidenceWriter.new(sessionId, config)
         self.warnedFailure = true
       end
     return false
+  end
+
+  function o:writeEvidence(record)
+    if self.config.writeJsonlResults == false then return true end
+    return self:writeEncodedLine(json.encode(withDefaults(record, self.sessionId, self.config)))
+  end
+
+  function o:writeSnapshotObservation(record)
+    if self.config.writeJsonlResults == false then return true end
+    if type(record) ~= 'table'
+      or record.recordType ~= 'snapshot-observation'
+      or record.schemaVersion ~= 1
+      or tostring(record.sessionId or '') ~= tostring(self.sessionId) then
+      return false
+    end
+    -- Snapshot records deliberately bypass generic evidence defaults so every
+    -- emitted key conforms to the strict snapshot-observation-v1 schema.
+    return self:writeEncodedLine(json.encode(record))
   end
 
   function o:writeSessionManifest(buildInfoLines)

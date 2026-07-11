@@ -72,16 +72,22 @@
         "mutationDisabled",
         "hudHookDisabled",
         "rawIdentityDisabled",
+        "hooksDisabled",
+        "runtimeDiscoveryDisabled",
+        "inventoryStagesDisabled",
         "inventoryDepth",
         "circuitBreakers"
       ],
       "properties": {
-        "writesDisabled": { "const": true },
-        "rpcCallsDisabled": { "const": true },
-        "rpcsDisabled": { "const": true },
-        "mutationDisabled": { "const": true },
-        "hudHookDisabled": { "const": true },
-        "rawIdentityDisabled": { "const": true },
+        "writesDisabled": { "type": "boolean" },
+        "rpcCallsDisabled": { "type": "boolean" },
+        "rpcsDisabled": { "type": "boolean" },
+        "mutationDisabled": { "type": "boolean" },
+        "hudHookDisabled": { "type": "boolean" },
+        "rawIdentityDisabled": { "type": "boolean" },
+        "hooksDisabled": { "type": "boolean" },
+        "runtimeDiscoveryDisabled": { "type": "boolean" },
+        "inventoryStagesDisabled": { "type": "boolean" },
         "inventoryDepth": { "type": "integer", "minimum": 0, "maximum": 14 },
         "circuitBreakers": { "type": "object", "additionalProperties": true }
       }

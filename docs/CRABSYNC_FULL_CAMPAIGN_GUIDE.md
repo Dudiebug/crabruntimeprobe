@@ -1,23 +1,25 @@
-# CrabSync Full-Observe Campaign Guide
+# CrabSync Snapshot Campaign Guide
 
-`crabsync-full-observe` is a coordinated, read-only evidence campaign. It runs
-safe passive observations together so a host and a joined client can collect a
-useful CrabSync evidence set during one deliberate multiplayer run. It is not a
-CrabSync transport, gameplay authority, or write test.
+`crabsync-full-observe` is the retained profile identifier for a coordinated,
+read-only, snapshot-first evidence campaign. Normal Play Guide mode samples a
+small set of previously proven PlayerState paths after a stability barrier, and
+the desktop dashboard derives candidate task completion from stable before/after
+state. It is not a CrabSync transport, gameplay authority, or write test.
 
 ## Safety boundary
 
-The campaign never writes gameplay properties, calls mutating RPCs, invents
-values, uses a gameplay field as a payload carrier, or sends state between the
-two computers. It does not enable the known-unsafe HUD tick hook. Player and
-machine identity is represented only by random local identifiers or redacted
-fingerprints.
+The normal campaign registers no gameplay, RPC, OnRep, multicast, HUD, or
+lifecycle hooks. It performs no runtime UFunction discovery, inventory-stage
+escalation, arbitrary UObject crawl, gameplay property write, RPC call, or
+payload-carrier trick. Player and machine identity is represented only by
+random local identifiers or redacted fingerprints.
 
-Passive observation means RuntimeProbe listens when the game naturally calls a
-function. A registered hook is only discovery evidence. A checklist item is not
-confirmed until a qualifying natural call or state transition is recorded.
-Natural-call, argument, ownership, lifecycle, visibility, UI, persistence, and
-future write-safety proof remain separate statuses.
+Snapshot evidence can show that a stable value changed after natural gameplay.
+It cannot prove which exact function caused the change. Exact-call, argument,
+ownership, replication direction, UI follow-up, persistence, and future
+write/apply safety therefore remain separate **Needs Coverage** rows. Malformed,
+unstable, wrong-session, wrong-generation, dirty, crash-suspect, or unsafe rows
+cannot complete a checklist item.
 
 ## Prepare both computers
 
@@ -33,7 +35,7 @@ future write-safety proof remain separate statuses.
 
 Prepare is idempotent. It installs the packaged RuntimeProbe payload, archives
 older transient results instead of erasing canonical evidence, writes the safe
-full-observe profile, and creates a new campaign generation. Resume reattaches
+snapshot profile, and creates a new campaign generation. Resume reattaches
 to an interrupted generation without clearing its evidence.
 
 ## Deliberate multiplayer run
@@ -43,7 +45,7 @@ actions naturally. Skip anything the run does not offer; never use a debug or
 synthetic path merely to complete a box.
 
 1. The host creates a lobby and the joined client joins it. Wait until both
-   dashboards show a stable PlayerState and two or more visible players.
+   dashboards show a stable local PlayerState.
 2. Start a run. Pick up at least one weapon mod, ability mod, melee mod, perk,
    and relic between the two players.
 3. Pick up a second copy of an item. Observe an item removal, drop, salvage, or
@@ -61,11 +63,12 @@ synthetic path merely to complete a box.
    each lifecycle transition.
 10. Close both games normally.
 
-The dashboard continuously shows the next useful action. Inventory access
-advances independently for all five categories through a strict 14-stage
-ladder. A stage advances only after its prerequisite is clean. An unsupported
-or failed category trips only that category's circuit breaker; unrelated
-passive observations continue.
+The dashboard continuously shows the next useful action. Normal sampling is
+paced and category-by-category rather than a bulk scan. It currently limits
+itself to reviewed scalar and redacted equipment paths. Live inventory-array
+counting, traversal, item metadata, Enhancements, and exact function watchers
+stay out of normal mode because their clean safety evidence is incomplete.
+Those tasks remain visible instead of being silently checked off.
 
 ## Play Guide (default)
 
@@ -77,9 +80,11 @@ box manually.
 
 Friendly states are **TO DO**, **IN PROGRESS**, **DONE**, **WAITING**, and
 **RETRY**. A grouped action becomes DONE only when every required linked signal
-has a clean terminal result. Dirty or crash-suspect evidence produces RETRY,
-and hook registration alone can produce at most IN PROGRESS. Newly discovered
-or unmapped checklist entries remain visible under **Watching automatically**.
+has a clean terminal result. Dirty or crash-suspect evidence produces RETRY. A
+stable state delta can finish only a rule explicitly mapped to that field and
+scope; it never finishes exact RPC, OnRep, multicast, argument, persistence, or
+apply-path tasks. Newly discovered or unmapped checklist entries remain visible
+under **Watching automatically**.
 
 Use the **To do**, **All**, and **Completed** filters to change which cards are
 shown. Category counts, percentages, and readiness denominators never change
@@ -122,7 +127,7 @@ coverage catalog and stay incomplete while material rows remain unresolved.
 
 | Status | Meaning |
 |---|---|
-| Not observed | No qualifying evidence exists. Hook registration does not count. |
+| Not observed | No qualifying stable snapshot evidence exists. |
 | In progress | A prerequisite or one side of a pre/post observation exists. |
 | Partial | Useful evidence exists, but one or more required dimensions are missing. |
 | Confirmed | Qualifying clean evidence satisfies this checklist predicate. |
@@ -138,18 +143,18 @@ stale; it never consumes a `.tmp` or partially written JSON file.
 
 ## Crash recovery
 
-Canonical evidence is append-only and each meaningful row is closed before the
-next operation. Live status uses a bounded ring of completed immutable JSON
-files. If the game crashes, leave the evidence directory intact, reopen the
-dashboard, and choose **Resume Campaign** or **Finish & Collect**. The collector
-marks a probable crash from process exit, crash-folder timing, unmatched
-breadcrumbs, missing final markers, and dirty JSONL tails. A crash-suspect row
-cannot become confirmed until a clean repeat or explicit safety disposition.
+Canonical evidence is append-only and snapshot qualification is performed by
+the desktop dashboard, not by in-game Lua. Live status uses a bounded ring of
+completed immutable JSON files. If the game crashes, leave the evidence
+directory intact, reopen the dashboard, and choose **Resume Campaign** or
+**Finish & Collect**. The collector marks probable crash and dirty-tail
+conditions. A crash-suspect row cannot become confirmed until a clean repeat or
+explicit safety disposition.
 
 ## Coverage catalog and Needs Coverage
 
 The Coverage view is generated from the complete supplied object dump,
-RuntimeProbe documentation/policies, imported evidence, and runtime-discovered
+RuntimeProbe documentation/policies, imported evidence, and catalog-generated
 relevant functions. It includes properties, struct fields, actors, native and
 Blueprint functions, RPC hypotheses, OnRep callbacks, multicasts, and natural
 events. Static name prefixes are hypotheses until runtime evidence confirms

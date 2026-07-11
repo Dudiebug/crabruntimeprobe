@@ -41,6 +41,11 @@ local DEFAULT_CONFIG = {
   allowInventoryArrayCountProbes = false,
   allowInventoryElementDataAssetReadProbes = false,
   fullObserveEnabled = false,
+  snapshotSamplerEnabled = false,
+  snapshotSampleIntervalSeconds = 3,
+  snapshotStableSamplesRequired = 10,
+  snapshotStableDwellSeconds = 30,
+  snapshotUnchangedHeartbeatSeconds = 30,
   allowPassiveObservationHooks = false,
   allowFullObserveInventoryStages = false,
   allowFullObserveRuntimeDiscovery = false,
@@ -267,10 +272,16 @@ if cfg.tickDriver == 'none' then
 end
 
 local safe = require('safe_access')
-local runner = require('probe_runner')
-local state = runner.new(cfg, safe, writer, evidenceWriter)
+local snapshotCampaign = cfg.fullObserveEnabled == true
+  and cfg.snapshotSamplerEnabled == true
+  and cfg.probeSet == 'crabsync-full-observe'
+local state = nil
+if not snapshotCampaign then
+  local runner = require('probe_runner')
+  state = runner.new(cfg, safe, writer, evidenceWriter)
+end
 local fullObserveCoordinator = nil
-if cfg.fullObserveEnabled == true and cfg.probeSet == 'crabsync-full-observe' then
+if snapshotCampaign then
   local coordinatorOk, coordinatorFactory = pcall(require, 'full_observe_coordinator')
   if coordinatorOk and type(coordinatorFactory) == 'table' and type(coordinatorFactory.new) == 'function' then
     local newOk, coordinatorOrErr = pcall(coordinatorFactory.new, sessionId, cfg, safe, evidenceWriter)
@@ -286,7 +297,7 @@ end
 
 local function tickOnce()
   local ok, err = pcall(function()
-    state:onTick()
+    if state then state:onTick() end
     if fullObserveCoordinator then fullObserveCoordinator:onTick(state) end
   end)
   if not ok then

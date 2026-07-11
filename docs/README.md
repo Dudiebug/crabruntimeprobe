@@ -3,6 +3,7 @@
 ## RuntimeProbe Operation Docs
 
 - [CrabSync Full-Observe Campaign Guide](CRABSYNC_FULL_CAMPAIGN_GUIDE.md)
+- [2026-07-10 Hook Observer Incident](INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md)
 - [CrabRuntimeProbe Field Guide](CRABRUNTIMEPROBE_FIELD_GUIDE.md)
 - [CrabRuntimeProbe Script Reference](CRABRUNTIMEPROBE_SCRIPT_REFERENCE.md)
 - [Runtime Contexts](RUNTIME_CONTEXTS.md)

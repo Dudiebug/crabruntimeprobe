@@ -1,7 +1,7 @@
 {
   "schemaVersion": "crabsync-checklist-v1",
   "profileId": "crabsync-full-observe",
-  "generatedAt": "2026-07-10T17:46:45.389Z",
+  "generatedAt": "2026-07-10T23:01:51.893Z",
   "completionPolicy": "Hook registration never completes an entry. Completion requires qualifying evidence; unsupported, unsafe, and not-applicable outcomes must be explicit.",
   "entries": [
     {
@@ -8013,5 +8013,5 @@
       ]
     }
   ],
-  "catalogHash": "d40b298a1c90b0550939007170f19f2818dad3525de41d1f30e856e83021604c"
+  "catalogHash": "cc6adec3c4450733990c65e6eb0b9173890fbeb5c823c5fb99580580f36976f0"
 }

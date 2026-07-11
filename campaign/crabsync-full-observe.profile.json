@@ -3,11 +3,15 @@
   "profileVersion": "crabsync-full-observe-v1",
   "id": "crabsync-full-observe",
   "name": "CrabSync Full Observe",
-  "generatedAt": "2026-07-10T17:46:45.389Z",
-  "catalogHash": "d40b298a1c90b0550939007170f19f2818dad3525de41d1f30e856e83021604c",
-  "mode": "passive-observation",
-  "description": "One maximum-observation, read-only campaign with all catalog-approved passive hooks active and independently gated staged inventory reads.",
+  "generatedAt": "2026-07-10T23:01:51.893Z",
+  "catalogHash": "cc6adec3c4450733990c65e6eb0b9173890fbeb5c823c5fb99580580f36976f0",
+  "mode": "snapshot-observation",
+  "description": "A snapshot-first, read-only campaign. Normal Play Guide sessions register no gameplay or lifecycle hooks, perform no runtime discovery, and leave staged inventory research disabled.",
   "runtimeContract": {
+    "snapshotSampleIntervalSeconds": 3,
+    "snapshotStableSamplesRequired": 10,
+    "snapshotStableDwellSeconds": 30,
+    "snapshotUnchangedHeartbeatSeconds": 30,
     "fullObserveHeartbeatSeconds": 1,
     "fullObserveInventoryIntervalSeconds": 2,
     "fullObserveInventoryHeartbeatSeconds": 30,
@@ -38,9 +42,18 @@
     "passiveHooksDoNotAuthorizeCalls": true,
     "evidenceFlushAfterMeaningfulRow": true
   },
+  "normalMode": {
+    "snapshotSamplerEnabled": true,
+    "gameplayHooksEnabled": false,
+    "lifecycleHooksEnabled": false,
+    "runtimeDiscoveryEnabled": false,
+    "inventoryEscalationEnabled": false,
+    "guiOwnsChecklistQualification": true
+  },
   "passiveHooks": {
-    "enabled": true,
-    "registerTogether": true,
+    "enabled": false,
+    "registerTogether": false,
+    "researchOnly": true,
     "globalEvidenceRowCap": 2048,
     "perDescriptorEvidenceRowCap": 128,
     "minimumObservationIntervalSeconds": 1,
@@ -60,7 +73,7 @@
           "transaction-multicast-enhancement",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "inventory.InventoryInfo.Enhancements.shape",
           "inventory.InventoryInfo.Enhancements.count",
@@ -71,8 +84,11 @@
           "inventory.InventoryInfo.Enhancements.count",
           "inventory.InventoryInfo.Enhancements.values"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -90,7 +106,7 @@
           "coverage-inventory-enhancements",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "inventory.InventoryInfo.Enhancements.shape",
           "inventory.InventoryInfo.Enhancements.count",
@@ -101,8 +117,11 @@
           "inventory.InventoryInfo.Enhancements.count",
           "inventory.InventoryInfo.Enhancements.values"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -120,7 +139,7 @@
           "coverage-inventory-enhancements",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "inventory.InventoryInfo.Enhancements.shape",
           "inventory.InventoryInfo.Enhancements.count",
@@ -131,8 +150,11 @@
           "inventory.InventoryInfo.Enhancements.count",
           "inventory.InventoryInfo.Enhancements.values"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -160,7 +182,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -171,8 +193,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -192,7 +217,7 @@
           "health-elimination-death",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -209,8 +234,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -228,7 +256,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -239,8 +267,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -260,7 +291,7 @@
           "world-shop",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals",
           "inventory.categoryCounts",
@@ -271,8 +302,11 @@
           "inventory.categoryCounts",
           "inventory.slotCounts"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -292,7 +326,7 @@
           "world-shop",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals",
           "inventory.categoryCounts",
@@ -303,8 +337,11 @@
           "inventory.categoryCounts",
           "inventory.slotCounts"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -323,15 +360,18 @@
           "resource-crystal-gain",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals"
         ],
         "postStateFields": [
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -349,7 +389,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -360,8 +400,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -379,7 +422,7 @@
           "coverage-player-runtime-state",
           "ownership-playerstate-gamestate"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -392,8 +435,11 @@
           "context.lifecycleGeneration",
           "context.localPlayerStateFingerprint"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -411,7 +457,7 @@
           "coverage-player-runtime-state",
           "ownership-playerstate-gamestate"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -424,8 +470,11 @@
           "context.lifecycleGeneration",
           "context.localPlayerStateFingerprint"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -444,7 +493,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -455,8 +504,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -475,7 +527,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -486,8 +538,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -506,7 +561,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -517,8 +572,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -537,7 +595,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -548,8 +606,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -569,7 +630,7 @@
           "world-portal",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.world",
           "context.role",
@@ -584,8 +645,11 @@
           "CrabGS.CurrentIsland",
           "CrabGS.MatchState"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -604,7 +668,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -615,8 +679,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -635,7 +702,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -646,8 +713,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -666,7 +736,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -677,8 +747,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -697,7 +770,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -708,8 +781,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -728,7 +804,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -739,8 +815,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -759,7 +838,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -770,8 +849,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -799,7 +881,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -810,8 +892,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -829,7 +914,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -840,8 +925,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -861,7 +949,7 @@
           "health-revival",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -878,8 +966,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -898,7 +989,7 @@
           "health-healing",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -915,8 +1006,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -935,7 +1029,7 @@
           "health-healing",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -952,8 +1046,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -971,7 +1068,7 @@
           "coverage-pickups-transactions",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -984,8 +1081,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1003,7 +1103,7 @@
           "coverage-pickups-transactions",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -1016,8 +1116,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1035,7 +1138,7 @@
           "coverage-pickups-transactions",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -1048,8 +1151,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1067,7 +1173,7 @@
           "coverage-inventory-slots",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.NumWeaponModSlots",
           "CrabPS.NumAbilityModSlots",
@@ -1080,8 +1186,11 @@
           "CrabPS.NumMeleeModSlots",
           "CrabPS.NumPerkSlots"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1100,15 +1209,18 @@
           "resource-crystal-gain",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals"
         ],
         "postStateFields": [
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1126,7 +1238,7 @@
           "coverage-pickups-transactions",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -1139,8 +1251,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1159,7 +1274,7 @@
           "world-save-restore",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.lifecycleGeneration",
           "CrabAutoSave.shape",
@@ -1170,8 +1285,11 @@
           "CrabAutoSave.shape",
           "CrabPS.inventoryAndResources"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1199,7 +1317,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -1210,8 +1328,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1230,7 +1351,7 @@
           "world-portal",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.world",
           "context.role",
@@ -1245,8 +1366,11 @@
           "CrabGS.CurrentIsland",
           "CrabGS.MatchState"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1285,7 +1409,7 @@
           "health-healing",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -1302,8 +1426,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1333,7 +1460,7 @@
           "world-island-completion",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.world",
           "context.role",
@@ -1348,8 +1475,11 @@
           "CrabGS.CurrentIsland",
           "CrabGS.MatchState"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1379,7 +1509,7 @@
           "health-elimination-death",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -1396,8 +1526,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1435,7 +1568,7 @@
           "world-portal",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.world",
           "context.role",
@@ -1450,8 +1583,11 @@
           "CrabGS.CurrentIsland",
           "CrabGS.MatchState"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1489,7 +1625,7 @@
           "transaction-client-picked-up",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -1502,8 +1638,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1533,7 +1672,7 @@
           "health-healing",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -1550,8 +1689,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1581,7 +1723,7 @@
           "health-out-of-bounds",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -1598,8 +1740,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1617,7 +1762,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -1628,8 +1773,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1647,7 +1795,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -1658,8 +1806,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1677,7 +1828,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -1688,8 +1839,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1718,7 +1872,7 @@
           "world-save-restore",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.lifecycleGeneration",
           "CrabAutoSave.shape",
@@ -1729,8 +1883,11 @@
           "CrabAutoSave.shape",
           "CrabPS.inventoryAndResources"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1750,7 +1907,7 @@
           "health-current-change",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.NumWeaponModSlots",
           "CrabPS.NumAbilityModSlots",
@@ -1763,8 +1920,11 @@
           "CrabPS.NumMeleeModSlots",
           "CrabPS.NumPerkSlots"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1783,7 +1943,7 @@
           "world-portal",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.world",
           "context.role",
@@ -1798,8 +1958,11 @@
           "CrabGS.CurrentIsland",
           "CrabGS.MatchState"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1828,7 +1991,7 @@
           "world-portal",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.world",
           "context.role",
@@ -1843,8 +2006,11 @@
           "CrabGS.CurrentIsland",
           "CrabGS.MatchState"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1881,7 +2047,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -1892,8 +2058,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1921,7 +2090,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -1932,8 +2101,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1951,7 +2123,7 @@
           "coverage-pickups-transactions",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -1964,8 +2136,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -1983,7 +2158,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -1994,8 +2169,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2014,7 +2192,7 @@
           "inventory-starting-defaults",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.WeaponDA",
           "CrabPS.AbilityDA",
@@ -2025,8 +2203,11 @@
           "CrabPS.AbilityDA",
           "CrabPS.MeleeDA"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2044,7 +2225,7 @@
           "coverage-pickups-transactions",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -2057,8 +2238,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2077,7 +2261,7 @@
           "inventory-starting-defaults",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.WeaponDA",
           "CrabPS.AbilityDA",
@@ -2088,8 +2272,11 @@
           "CrabPS.AbilityDA",
           "CrabPS.MeleeDA"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2108,7 +2295,7 @@
           "health-healing",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -2125,8 +2312,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2153,7 +2343,7 @@
         "checklistLinks": [
           "coverage-replication-rpc-events"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -2164,8 +2354,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2194,7 +2387,7 @@
           "transaction-server-apply-enhancement",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "inventory.InventoryInfo.Enhancements.shape",
           "inventory.InventoryInfo.Enhancements.count",
@@ -2205,8 +2398,11 @@
           "inventory.InventoryInfo.Enhancements.count",
           "inventory.InventoryInfo.Enhancements.values"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2225,7 +2421,7 @@
           "transaction-server-autoloot",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -2238,8 +2434,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2269,7 +2468,7 @@
           "health-healing",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -2286,8 +2485,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2307,7 +2509,7 @@
           "health-healing",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -2324,8 +2526,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2363,7 +2568,7 @@
           "transaction-drop",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -2376,8 +2581,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2406,7 +2614,7 @@
           "transaction-server-interact",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -2419,8 +2627,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2437,7 +2648,7 @@
         "checklistLinks": [
           "coverage-replication-rpc-events"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -2448,8 +2659,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2478,7 +2692,7 @@
           "transaction-salvage",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -2491,8 +2705,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2519,7 +2736,7 @@
         "checklistLinks": [
           "coverage-pickups-transactions"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -2532,8 +2749,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2572,7 +2792,7 @@
           "world-shop",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals",
           "inventory.categoryCounts",
@@ -2583,8 +2803,11 @@
           "inventory.categoryCounts",
           "inventory.slotCounts"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2603,7 +2826,7 @@
           "world-portal",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.world",
           "context.role",
@@ -2618,8 +2841,11 @@
           "CrabGS.CurrentIsland",
           "CrabGS.MatchState"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2639,7 +2865,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.WeaponDA",
           "CrabPS.AbilityDA",
@@ -2650,8 +2876,11 @@
           "CrabPS.AbilityDA",
           "CrabPS.MeleeDA"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2670,7 +2899,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -2681,8 +2910,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2701,7 +2933,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -2712,8 +2944,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2732,7 +2967,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -2743,8 +2978,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2765,15 +3003,18 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals"
         ],
         "postStateFields": [
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2794,7 +3035,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -2811,8 +3052,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2833,7 +3077,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.HealthInfo.CurrentHealth",
           "CrabPS.HealthInfo.CurrentMaxHealth",
@@ -2850,8 +3094,11 @@
           "CrabPS.HealthInfo.CurrentArmorPlates",
           "CrabPS.HealthInfo.CurrentArmorPlateHealth"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2871,7 +3118,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -2882,8 +3129,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2905,15 +3155,18 @@
           "world-reward-selection",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "crash-suspect-current-hook-method-disabled",
         "preStateFields": [
           "CrabPS.Crystals"
         ],
         "postStateFields": [
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": true,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2933,7 +3186,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.WeaponDA",
           "CrabPS.AbilityDA",
@@ -2944,8 +3197,11 @@
           "CrabPS.AbilityDA",
           "CrabPS.MeleeDA"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2964,7 +3220,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -2975,8 +3231,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -2996,7 +3255,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.WeaponDA",
           "CrabPS.AbilityDA",
@@ -3007,8 +3266,11 @@
           "CrabPS.AbilityDA",
           "CrabPS.MeleeDA"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3057,7 +3319,7 @@
           "ownership-playerstate-gamestate",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.WeaponDA",
           "CrabPS.AbilityDA",
@@ -3068,8 +3330,11 @@
           "CrabPS.AbilityDA",
           "CrabPS.MeleeDA"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3108,7 +3373,7 @@
           "ownership-playerstate-gamestate",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.NumWeaponModSlots",
           "CrabPS.NumAbilityModSlots",
@@ -3121,8 +3386,11 @@
           "CrabPS.NumMeleeModSlots",
           "CrabPS.NumPerkSlots"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3169,7 +3437,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -3180,8 +3448,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3211,7 +3482,7 @@
           "ownership-playerstate-gamestate",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -3224,8 +3495,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3255,7 +3529,7 @@
           "ownership-playerstate-gamestate",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -3268,8 +3542,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3299,7 +3576,7 @@
           "ownership-playerstate-gamestate",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -3312,8 +3589,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3343,7 +3623,7 @@
           "ownership-playerstate-gamestate",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -3356,8 +3636,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3387,7 +3670,7 @@
           "ownership-playerstate-gamestate",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "pickup.safeObjectSummary",
           "pickup.PickupInfo.shape",
@@ -3400,8 +3683,11 @@
           "inventory.categoryCounts",
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3432,7 +3718,7 @@
           "ownership-playerstate-gamestate",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.WeaponDA",
           "CrabPS.AbilityDA",
@@ -3443,8 +3729,11 @@
           "CrabPS.AbilityDA",
           "CrabPS.MeleeDA"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3475,7 +3764,7 @@
           "ownership-playerstate-gamestate",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.WeaponDA",
           "CrabPS.AbilityDA",
@@ -3486,8 +3775,11 @@
           "CrabPS.AbilityDA",
           "CrabPS.MeleeDA"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3518,7 +3810,7 @@
           "ownership-playerstate-gamestate",
           "official-apply-candidates-observed"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.WeaponDA",
           "CrabPS.AbilityDA",
@@ -3529,8 +3821,11 @@
           "CrabPS.AbilityDA",
           "CrabPS.MeleeDA"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3550,15 +3845,18 @@
           "world-shop",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals"
         ],
         "postStateFields": [
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3588,15 +3886,18 @@
           "world-shop",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals"
         ],
         "postStateFields": [
           "CrabPS.Crystals"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3615,7 +3916,7 @@
           "world-shop",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals",
           "inventory.categoryCounts",
@@ -3626,8 +3927,11 @@
           "inventory.categoryCounts",
           "inventory.slotCounts"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3645,7 +3949,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -3656,8 +3960,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3676,7 +3983,7 @@
           "world-shop",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals",
           "inventory.categoryCounts",
@@ -3687,8 +3994,11 @@
           "inventory.categoryCounts",
           "inventory.slotCounts"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3707,7 +4017,7 @@
           "world-shop",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals",
           "inventory.categoryCounts",
@@ -3718,8 +4028,11 @@
           "inventory.categoryCounts",
           "inventory.slotCounts"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3738,7 +4051,7 @@
           "world-shop",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "CrabPS.Crystals",
           "inventory.categoryCounts",
@@ -3749,8 +4062,11 @@
           "inventory.categoryCounts",
           "inventory.slotCounts"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3768,7 +4084,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -3779,8 +4095,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3798,7 +4117,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -3809,8 +4128,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3828,7 +4150,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -3839,8 +4161,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3858,7 +4183,7 @@
           "coverage-replication-rpc-events",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -3869,8 +4194,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3887,7 +4215,7 @@
         "checklistLinks": [
           "coverage-replication-rpc-events"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -3898,8 +4226,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3926,7 +4257,7 @@
         "checklistLinks": [
           "coverage-replication-rpc-events"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -3937,8 +4268,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3956,7 +4290,7 @@
           "coverage-replication-rpc-events",
           "inventory-weapon-mod-pickup"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.world",
@@ -3967,8 +4301,11 @@
           "context.world",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -3987,7 +4324,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.localPlayerStateFingerprint",
@@ -4000,8 +4337,11 @@
           "context.visiblePlayerFingerprints",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -4020,7 +4360,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.localPlayerStateFingerprint",
@@ -4033,8 +4373,11 @@
           "context.visiblePlayerFingerprints",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -4053,7 +4396,7 @@
           "ownership-playerstate-gamestate",
           "world-ui-follow-up"
         ],
-        "safetyClassification": "passive-observation-only",
+        "safetyClassification": "research-only-disabled-current-hook-method",
         "preStateFields": [
           "context.role",
           "context.localPlayerStateFingerprint",
@@ -4066,8 +4409,11 @@
           "context.visiblePlayerFingerprints",
           "context.lifecycleGeneration"
         ],
-        "initiator": "vanilla-passive-only",
-        "callPolicy": "observe-only-never-invoke",
+        "initiator": "disabled-research-candidate",
+        "callPolicy": "disabled-do-not-register-or-invoke",
+        "normalModeEnabled": false,
+        "researchOnly": true,
+        "knownCrashContext": false,
         "captureTiming": "pre-and-post-where-supported",
         "owningPlayerStateFingerprint": true,
         "lifecycleGenerationRequired": true,
@@ -4076,7 +4422,8 @@
     ]
   },
   "inventoryEscalation": {
-    "enabled": true,
+    "enabled": false,
+    "researchOnly": true,
     "persistProgress": true,
     "resumeAfterRestart": true,
     "independentCategoryCircuitBreakers": true,
@@ -4303,6 +4650,8 @@
     ]
   },
   "runtimeDiscovery": {
+    "enabled": false,
+    "researchOnly": true,
     "readOnly": true,
     "enumerateArbitraryUObjects": false,
     "nativeClassRoots": [
@@ -4606,7 +4955,8 @@
       "AnimGraph"
     ],
     "newlyDiscoveredCandidatesDisposition": "needs-coverage",
-    "requireExactResolvedUFunctionPathBeforeHook": true
+    "normalHookRegistrationProhibited": true,
+    "requireExactResolvedUFunctionPathBeforeAnyFutureIsolatedMethod": true
   },
   "lifecycle": {
     "invalidateReferencesOnGenerationChange": true,
@@ -4621,7 +4971,7 @@
       "disconnect",
       "unstable-playerstate"
     ],
-    "stableSamplesRequiredBeforeStagedRead": 3,
-    "stableDwellSecondsRequiredBeforeStagedRead": 2
+    "stableSamplesRequiredBeforeStagedRead": 10,
+    "stableDwellSecondsRequiredBeforeStagedRead": 30
   }
 }

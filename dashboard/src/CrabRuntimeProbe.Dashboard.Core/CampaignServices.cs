@@ -224,10 +224,35 @@ public sealed class CampaignService
         return state;
     }
 
-    public async Task<LocalCampaignState?> ResumeAsync(CancellationToken cancellationToken = default)
+    public async Task<LocalCampaignState?> ResumeAsync(
+        CancellationToken cancellationToken = default,
+        string? dashboardExecutablePath = null)
     {
         var state = await _stateStore.LoadCampaignAsync(cancellationToken).ConfigureAwait(false);
         if (state is null || !Directory.Exists(state.GameDirectory) || !File.Exists(state.ExecutablePath)) return null;
+        var installation = new GameInstallation(state.GameDirectory, state.ExecutablePath, "saved-campaign");
+        var scripts = Path.GetDirectoryName(state.StatusDirectory)
+                      ?? throw new DirectoryNotFoundException("Saved RuntimeProbe scripts directory is invalid.");
+        var autoStartPath = Path.Combine(scripts, "dashboard_autostart.txt");
+        var existingAutoStart = File.Exists(autoStartPath)
+            ? (await File.ReadAllTextAsync(autoStartPath, cancellationToken).ConfigureAwait(false)).Trim()
+            : string.Empty;
+        var resources = _resourceLocator.Locate();
+        await InstallPayloadAsync(resources, installation, cancellationToken).ConfigureAwait(false);
+        var effectiveDashboardPath = !string.IsNullOrWhiteSpace(dashboardExecutablePath)
+            ? dashboardExecutablePath
+            : existingAutoStart;
+        if (!string.IsNullOrWhiteSpace(effectiveDashboardPath))
+            await ConfigureDashboardAutoStartAsync(scripts, effectiveDashboardPath, cancellationToken)
+                .ConfigureAwait(false);
+        await ConfigureFullObserveAsync(
+            Path.Combine(scripts, "config.txt"),
+            state.Role,
+            state.CampaignName,
+            state.Generation,
+            state.SessionId,
+            state.MachineId,
+            cancellationToken).ConfigureAwait(false);
         Directory.CreateDirectory(state.StatusDirectory);
         var resumed = state with { Phase = "monitoring", UpdatedAtUtc = DateTimeOffset.UtcNow };
         await WriteCampaignRequestAsync(state.StatusDirectory, resumed, true, cancellationToken).ConfigureAwait(false);
@@ -310,6 +335,9 @@ public sealed class CampaignService
                 writesDisabled = true,
                 rpcsDisabled = true,
                 mutationDisabled = true,
+                hooksDisabled = true,
+                runtimeDiscoveryDisabled = true,
+                inventoryStagesDisabled = true,
                 hudHookDisabled = true,
                 rawIdentityDisabled = true
             }
@@ -429,11 +457,16 @@ public sealed class CampaignService
             ["tickDriver"] = "executeDelay",
             ["probeSet"] = "crabsync-full-observe",
             ["fullObserveEnabled"] = "true",
+            ["snapshotSamplerEnabled"] = "true",
+            ["snapshotSampleIntervalSeconds"] = "3",
+            ["snapshotStableSamplesRequired"] = "10",
+            ["snapshotStableDwellSeconds"] = "30",
+            ["snapshotUnchangedHeartbeatSeconds"] = "30",
             ["statusWriterEnabled"] = "true",
             ["statusRingSize"] = "4",
-            ["allowPassiveObservationHooks"] = "true",
-            ["allowFullObserveInventoryStages"] = "true",
-            ["allowFullObserveRuntimeDiscovery"] = "true",
+            ["allowPassiveObservationHooks"] = "false",
+            ["allowFullObserveInventoryStages"] = "false",
+            ["allowFullObserveRuntimeDiscovery"] = "false",
             ["fullObserveHeartbeatSeconds"] = "1",
             ["fullObserveInventoryIntervalSeconds"] = "2",
             ["fullObserveInventoryHeartbeatSeconds"] = "30",
@@ -445,7 +478,21 @@ public sealed class CampaignService
             ["allowRawIdentityEvidence"] = "false",
             ["allowUnknownRoleProbes"] = "false",
             ["allowJoinedClientDeepProbes"] = "false",
-            ["allowDeepArrayProbes"] = "false"
+            ["allowDeepArrayProbes"] = "false",
+            ["allowInventoryInfoProbes"] = "false",
+            ["allowHealthProbes"] = "false",
+            ["allowIdentityProbes"] = "false",
+            ["allowResourceVisibilityProbes"] = "false",
+            ["allowCrystalsReadProbes"] = "false",
+            ["allowSlotsReadProbes"] = "false",
+            ["allowSafeScalarWatchProbes"] = "false",
+            ["allowPerkDataAssetCatalogProbes"] = "false",
+            ["allowMaxSafePlayRecorderProbes"] = "false",
+            ["allowInventoryArrayShallowProbes"] = "false",
+            ["allowInventoryArrayShapeConfirmProbes"] = "false",
+            ["allowInventoryUserdataIntrospectionProbes"] = "false",
+            ["allowInventoryArrayCountProbes"] = "false",
+            ["allowInventoryElementDataAssetReadProbes"] = "false"
         };
 
         var lines = (await File.ReadAllLinesAsync(configPath, cancellationToken).ConfigureAwait(false)).ToList();
@@ -589,9 +636,17 @@ public sealed class GameProcessExitDetector
 
 public sealed class GameProcessService
 {
-    public bool IsRunning(GameInstallation installation) => FindRunning(installation) is not null;
+    public bool IsRunning(GameInstallation installation)
+    {
+        using var process = FindRunning(installation);
+        return process is not null;
+    }
 
-    public int? ProcessId(GameInstallation installation) => FindRunning(installation)?.Id;
+    public int? ProcessId(GameInstallation installation)
+    {
+        using var process = FindRunning(installation);
+        return process?.Id;
+    }
 
     public Process? FindRunning(GameInstallation installation)
     {
@@ -604,8 +659,19 @@ public sealed class GameProcessService
 
         foreach (var name in names)
         {
-            var process = Process.GetProcessesByName(name).FirstOrDefault(IsLive);
-            if (process is not null) return process;
+            Process? selected = null;
+            foreach (var process in Process.GetProcessesByName(name))
+            {
+                if (selected is null && IsLive(process))
+                {
+                    selected = process;
+                }
+                else
+                {
+                    process.Dispose();
+                }
+            }
+            if (selected is not null) return selected;
         }
         return null;
     }
@@ -628,7 +694,7 @@ public sealed class GameProcessService
         TimeSpan pollInterval,
         CancellationToken cancellationToken = default)
     {
-        var process = FindRunning(installation);
+        using var process = FindRunning(installation);
         if (process is null) return null;
         while (!process.HasExited)
         {

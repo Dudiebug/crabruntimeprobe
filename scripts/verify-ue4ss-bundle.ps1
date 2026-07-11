@@ -68,7 +68,9 @@ foreach ($file in @(
   "Mods\CrabRuntimeProbe\Scripts\probe_runner.lua",
   "Mods\CrabRuntimeProbe\Scripts\result_writer.lua",
   "Mods\CrabRuntimeProbe\Scripts\runtime_context.lua",
-  "Mods\CrabRuntimeProbe\Scripts\safe_access.lua"
+  "Mods\CrabRuntimeProbe\Scripts\safe_access.lua",
+  "Mods\CrabRuntimeProbe\Scripts\snapshot_sampler.lua",
+  "schemas\snapshot-observation-v1.schema.json"
 )) {
   Require-File $file
 }
@@ -101,6 +103,35 @@ $configPath = Join-Path $BundleRoot "Mods\CrabRuntimeProbe\Scripts\config.txt"
 if (Test-Path -LiteralPath $configPath) {
   try {
     Assert-CrabRuntimeProbeConfig -ConfigPath $configPath -Label "bundle config"
+  } catch {
+    Add-Error $_.Exception.Message
+  }
+}
+
+$payloadScriptsRoot = Join-Path $BundleRoot "Mods\CrabRuntimeProbe\Scripts"
+if (Test-Path -LiteralPath $payloadScriptsRoot -PathType Container) {
+  try {
+    Assert-CrabRuntimeProbeModLayout `
+      -ModRoot (Split-Path -Parent $payloadScriptsRoot) `
+      -Label 'UE4SS bundle mod'
+  } catch {
+    Add-Error $_.Exception.Message
+  }
+  try {
+    Assert-CrabRuntimeProbeNormalSamplerSafety `
+      -ScriptsRoot $payloadScriptsRoot `
+      -Label 'UE4SS bundle normal snapshot sampler'
+  } catch {
+    Add-Error $_.Exception.Message
+  }
+}
+
+$snapshotSchemaPath = Join-Path $BundleRoot "schemas\snapshot-observation-v1.schema.json"
+if (Test-Path -LiteralPath $snapshotSchemaPath -PathType Leaf) {
+  try {
+    Assert-CrabRuntimeProbeSnapshotObservationSchema `
+      -SchemaPath $snapshotSchemaPath `
+      -Label 'UE4SS bundle snapshot observation schema'
   } catch {
     Add-Error $_.Exception.Message
   }
