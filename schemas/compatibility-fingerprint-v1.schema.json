@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/compatibility-fingerprint-v1.schema.json",
+  "title": "CrabRuntimeProbe compatibility fingerprint v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "gameBuild", "ue4ssVersion", "coverageCatalogHash", "hookCatalogIdentity", "callbackImplementationVersion", "callbackSchemaVersion", "validationBehaviorVersion", "fingerprint", "computedAtUtc"],
+  "properties": {
+    "schemaVersion": { "const": "compatibility-fingerprint-v1" },
+    "gameBuild": { "$ref": "#/$defs/component" },
+    "ue4ssVersion": { "$ref": "#/$defs/component" },
+    "coverageCatalogHash": { "$ref": "#/$defs/hash" },
+    "hookCatalogIdentity": { "$ref": "#/$defs/hash" },
+    "callbackImplementationVersion": { "$ref": "#/$defs/component" },
+    "callbackSchemaVersion": { "$ref": "#/$defs/component" },
+    "validationBehaviorVersion": { "$ref": "#/$defs/component" },
+    "fingerprint": { "$ref": "#/$defs/hash" },
+    "computedAtUtc": { "type": "string", "format": "date-time", "maxLength": 64 }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "component": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.+:-]+$" }
+  }
+}

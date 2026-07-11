@@ -17,5 +17,10 @@ objectdump/*.md
 # Node artifacts
 node_modules/
 
+# .NET dashboard build artifacts
+dashboard/**/bin/
+dashboard/**/obj/
+*.user
+
 # Release packaging output
 dist/

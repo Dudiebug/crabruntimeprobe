@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dudiebug.github.io/crabruntimeprobe/schemas/hook-candidate-catalog-v1.schema.json",
+  "title": "CrabRuntimeProbe progressive hook candidate catalog v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAtUtc", "coverageCatalogHash", "hookCatalogIdentity", "callbackImplementationVersion", "callbackSchemaVersion", "validationBehaviorVersion", "principalCandidateId", "candidateCount", "candidates"],
+  "properties": {
+    "schemaVersion": { "const": "hook-candidate-catalog-v1" },
+    "generatedAtUtc": { "type": "string", "format": "date-time", "maxLength": 64 },
+    "coverageCatalogHash": { "$ref": "#/$defs/hash" },
+    "hookCatalogIdentity": { "$ref": "#/$defs/hash" },
+    "callbackImplementationVersion": { "$ref": "#/$defs/version" },
+    "callbackSchemaVersion": { "$ref": "#/$defs/version" },
+    "validationBehaviorVersion": { "$ref": "#/$defs/version" },
+    "principalCandidateId": { "$ref": "#/$defs/id" },
+    "candidateCount": { "type": "integer", "minimum": 1, "maximum": 512 },
+    "candidates": { "type": "array", "minItems": 1, "maxItems": 512, "items": { "$ref": "#/$defs/candidate" } }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "id": { "type": "string", "pattern": "^hook-[a-z0-9-]{3,120}$", "maxLength": 128 },
+    "version": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{1,95}$", "maxLength": 96 },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "displayName", "category", "hookPath", "hookPathFingerprint", "ownerPath", "ownerKind", "candidateType", "priority", "suggestedAction", "roleApplicability", "allowedDepths", "maximumValidationDepth", "callbackPhase", "scopeProperties", "reviewedStateFields", "argumentSchema", "checklistLinks", "knownCrashContext", "staticCatalogValidated", "naturalObservationOnly", "neverInvoke", "noMutation", "staleUObjectRetention", "explicitExclusions"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "category": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "hookPath": { "type": "string", "pattern": "^/(Script|Game)/.+:[A-Za-z0-9_]+$", "maxLength": 512 },
+        "hookPathFingerprint": { "$ref": "#/$defs/hash" },
+        "ownerPath": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "ownerKind": { "enum": ["native", "blueprint"] },
+        "candidateType": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "priority": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "suggestedAction": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "roleApplicability": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "allowedDepths": {
+          "type": "array", "minItems": 8, "maxItems": 8,
+          "items": { "type": "object", "additionalProperties": false, "required": ["depth", "name"], "properties": { "depth": { "type": "integer", "minimum": 0, "maximum": 7 }, "name": { "type": "string", "minLength": 1, "maxLength": 64 } } }
+        },
+        "maximumValidationDepth": { "const": 7 },
+        "callbackPhase": { "enum": ["post", "blueprint-post-only"] },
+        "scopeProperties": { "type": "array", "maxItems": 8, "items": { "enum": ["OwningPS", "PlayerState"] }, "uniqueItems": true },
+        "reviewedStateFields": { "type": "array", "maxItems": 32, "items": { "type": "string", "pattern": "^CrabPS\\.[A-Za-z0-9_]+$", "maxLength": 96 }, "uniqueItems": true },
+        "argumentSchema": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/argument" } },
+        "checklistLinks": { "type": "array", "maxItems": 64, "items": { "type": "string", "minLength": 1, "maxLength": 128 }, "uniqueItems": true },
+        "knownCrashContext": { "type": "boolean" },
+        "staticCatalogValidated": { "const": true },
+        "naturalObservationOnly": { "const": true },
+        "neverInvoke": { "const": true },
+        "noMutation": { "const": true },
+        "staleUObjectRetention": { "const": false },
+        "explicitExclusions": { "type": "array", "minItems": 5, "maxItems": 16, "items": { "type": "string", "maxLength": 64 }, "uniqueItems": true }
+      }
+    },
+    "argument": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "propertyType", "valueTypePath", "safeSummary", "redaction"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "propertyType": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "valueTypePath": { "type": "string", "maxLength": 256 },
+        "safeSummary": { "type": "string", "minLength": 1, "maxLength": 96 },
+        "redaction": { "type": "string", "minLength": 1, "maxLength": 96 }
+      }
+    }
+  }
+}

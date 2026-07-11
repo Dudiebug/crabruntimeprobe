@@ -16,11 +16,11 @@ local function appendLine(path, line)
   return false
 end
 
-local function tryCreateDirectory(path)
-  if type(os.execute) ~= 'function' then return end
-  pcall(function()
-    os.execute('if not exist "' .. path .. '" mkdir "' .. path .. '"')
-  end)
+local function fileExists(path)
+  local f = io.open(path, 'r')
+  if not f then return false end
+  f:close()
+  return true
 end
 
 function writer.new(sessionId, config)
@@ -30,35 +30,47 @@ function writer.new(sessionId, config)
     resultDir = 'Mods/CrabRuntimeProbe/Scripts/results',
     resultPath = 'Mods/CrabRuntimeProbe/Scripts/results/probe_results_' .. sessionId .. '.jsonl',
     fallbackPath = 'Mods/CrabRuntimeProbe/Scripts/probe_results_' .. sessionId .. '.jsonl',
-    triedCreateResultDir = false,
     warnedFallback = false,
-    warnedFailure = false
+    warnedFailure = false,
+    activeResultPath = nil
   }
+  if fileExists(o.resultPath) then
+    o.activeResultPath = o.resultPath
+  elseif fileExists(o.fallbackPath) then
+    o.activeResultPath = o.fallbackPath
+  end
 
   function o:write(record)
     if self.config.writeJsonlResults == false then return true end
     record.timestamp = record.timestamp or utcNow()
     record.sessionId = self.sessionId
     local line = json.encode(record)
-    if not self.triedCreateResultDir then
-      tryCreateDirectory(self.resultDir)
-      self.triedCreateResultDir = true
+    if self.activeResultPath and appendLine(self.activeResultPath, line) then return true end
+    local primaryCandidate = self.activeResultPath == self.resultPath and self.fallbackPath or self.resultPath
+    local fallbackCandidate = primaryCandidate == self.resultPath and self.fallbackPath or self.resultPath
+    if appendLine(primaryCandidate, line) then
+      self.activeResultPath = primaryCandidate
+      if primaryCandidate == self.fallbackPath and not self.warnedFallback then
+        crpLog.line('[CrabRuntimeProbe] primary result path unavailable; using fallback')
+        self.warnedFallback = true
+      end
+      return true
     end
-    if not appendLine(self.resultPath, line) then
-      if appendLine(self.fallbackPath, line) then
+    if appendLine(fallbackCandidate, line) then
+      self.activeResultPath = fallbackCandidate
+      if fallbackCandidate == self.fallbackPath then
         if not self.warnedFallback then
           crpLog.line('[CrabRuntimeProbe] primary result path unavailable; using fallback')
           self.warnedFallback = true
         end
-        return true
       end
+      return true
+    end
       if not self.warnedFailure then
         crpLog.line('[CrabRuntimeProbe] ERROR: result write failed for primary and fallback')
         self.warnedFailure = true
       end
-      return false
-    end
-    return true
+    return false
   end
 
   return o

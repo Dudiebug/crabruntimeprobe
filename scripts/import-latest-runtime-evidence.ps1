@@ -15,6 +15,8 @@ try {
   node tools/import_runtime_evidence.js --from $From
   Write-Host "Generating docs..."
   node tools/generate_access_docs.js
+  Write-Host "Refreshing CrabSync coverage catalog from imported runtime evidence..."
+  node tools/generate_crabsync_coverage_catalog.js --refresh-runtime
   Write-Host "Building wiki staging..."
   node tools/build_wiki_docs.js
   Write-Host "docs generated = docs\"

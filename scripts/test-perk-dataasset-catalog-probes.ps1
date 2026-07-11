@@ -93,7 +93,7 @@ const phase = plan.phases.find((item) => item.phaseId === 'perk-da-catalog-read'
 assert(phase, 'perk-da-catalog-read phase exists');
 assert(phase.implemented === true, 'perk-da-catalog-read is implemented');
 assert(phase.probeSet === 'perk-da-catalog-read', 'phase probeSet is perk-da-catalog-read');
-assert(phase.nextPhase === 'inventory-array-shallow-read', 'perk catalog advances to inventory-array-shallow-read placeholder');
+assert(phase.nextPhase === 'inventory-array-count-read', 'perk catalog advances to the implemented inventory count phase');
 
 const safeWatch = plan.phases.find((item) => item.phaseId === 'safe-scalar-watch');
 assert(safeWatch && safeWatch.nextPhase === 'perk-da-catalog-read', 'safe scalar watch advances to perk catalog');
@@ -241,9 +241,9 @@ const slotsCompleteState = helpers.markCollected(plan, {
 assert(slotsCompleteState.nextRecommendedPhase === 'perk-da-catalog-read', `expected perk-da-catalog-read, got ${slotsCompleteState.nextRecommendedPhase}`);
 
 const perkCompleteState = helpers.markCollected(plan, slotsCompleteState, 'perk-da-catalog-read', { status: 'perk_da_catalog_confirmed' });
-assert(perkCompleteState.nextRecommendedPhase === 'inventory-array-shallow-read', `expected inventory-array-shallow-read, got ${perkCompleteState.nextRecommendedPhase}`);
+assert(perkCompleteState.nextRecommendedPhase === 'inventory-array-count-read', `expected inventory-array-count-read, got ${perkCompleteState.nextRecommendedPhase}`);
 const perkNotFoundState = helpers.markCollected(plan, slotsCompleteState, 'perk-da-catalog-read', { status: 'perk_da_catalog_not_found' });
-assert(perkNotFoundState.nextRecommendedPhase === 'inventory-array-shallow-read', `expected inventory-array-shallow-read after not-found, got ${perkNotFoundState.nextRecommendedPhase}`);
+assert(perkNotFoundState.nextRecommendedPhase === 'inventory-array-count-read', `expected inventory-array-count-read after not-found, got ${perkNotFoundState.nextRecommendedPhase}`);
 '@
 
 node $NodeTestPath (Join-Path $RepoRoot "tools\campaign_helpers.js") $RepoRoot

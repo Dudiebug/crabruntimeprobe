@@ -1,0 +1,162 @@
+name: Dashboard Windows verification
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-dashboard:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.419
+
+      - name: Validate generated catalog
+        shell: pwsh
+        run: |
+          node tools/generate_crabsync_coverage_catalog.js --validate
+          node tools/generate_crabsync_coverage_catalog.js --self-test
+          node tools/generate_progressive_hook_catalog.js --validate
+          node tools/generate_progressive_hook_catalog.js --self-test
+
+      - name: Build dashboard
+        shell: pwsh
+        run: dotnet build dashboard/CrabRuntimeProbe.Dashboard.sln -c Release
+
+      - name: Run dashboard tests
+        shell: pwsh
+        run: dotnet run --project dashboard/tests/CrabRuntimeProbe.Dashboard.Tests/CrabRuntimeProbe.Dashboard.Tests.csproj -c Release
+
+      - name: Run full regression suite
+        shell: powershell
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/run-all-tests.ps1
+
+      - name: Build and verify v1.0.4 release layouts
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1 -Version 1.0.4
+          if ($LASTEXITCODE -ne 0) { throw "Canonical v1.0.4 release build failed." }
+          $canonicalExtract = Join-Path $env:RUNNER_TEMP "canonical-release"
+          Expand-Archive -LiteralPath "dist\CrabRuntimeProbe-v1.0.4-win-x64.zip" -DestinationPath $canonicalExtract -Force
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-release.ps1 `
+            -BundlePath (Join-Path $canonicalExtract "CrabRuntimeProbe-v1.0.4-win-x64")
+          if ($LASTEXITCODE -ne 0) { throw "Extracted canonical release verification failed." }
+
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/build-ue4ss-bundle.ps1 `
+            -CrabInvSyncRoot . -Version 1.0.4
+          if ($LASTEXITCODE -ne 0) { throw "UE4SS v1.0.4 release build failed." }
+          $ue4ssExtract = Join-Path $env:RUNNER_TEMP "ue4ss-release"
+          Expand-Archive -LiteralPath "dist\CrabRuntimeProbe-v1.0.4-UE4SS.zip" -DestinationPath $ue4ssExtract -Force
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-ue4ss-bundle.ps1 $ue4ssExtract
+          if ($LASTEXITCODE -ne 0) { throw "Extracted UE4SS release verification failed." }
+
+      - name: Render review screenshots
+        shell: pwsh
+        run: |
+          $outputRoot = Join-Path $env:RUNNER_TEMP "dashboard-screenshots"
+          New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
+          $expectedScreenshots = [ordered]@{
+            "dashboard-play-guide.png" = "play-guide"
+            "dashboard-play-guide.advanced-overview.png" = "advanced-overview"
+            "dashboard-play-guide.advanced-research.png" = "advanced-research"
+            "dashboard-play-guide.advanced-checklist.png" = "checklist"
+            "dashboard-play-guide.advanced-needs-coverage.png" = "coverage"
+          }
+          foreach ($entry in $expectedScreenshots.GetEnumerator()) {
+            $output = Join-Path $outputRoot $entry.Key
+            dotnet run --no-build --project dashboard/src/CrabRuntimeProbe.Dashboard/CrabRuntimeProbe.Dashboard.csproj -c Release -- --screenshot $output --screenshot-tab $entry.Value
+            if ($LASTEXITCODE -ne 0) {
+              throw "Screenshot render failed for $($entry.Key)"
+            }
+          }
+
+          $actualNames = @(Get-ChildItem -LiteralPath $outputRoot -File -Filter "*.png" |
+            Sort-Object Name | ForEach-Object Name)
+          $expectedNames = @($expectedScreenshots.Keys | Sort-Object)
+          $nameDifference = @(Compare-Object -ReferenceObject $expectedNames -DifferenceObject $actualNames)
+          if ($actualNames.Count -ne 5 -or $nameDifference.Count -ne 0) {
+            throw "Expected exactly five review screenshots: $($expectedNames -join ', '); got: $($actualNames -join ', ')"
+          }
+
+          Add-Type -AssemblyName System.Drawing
+          Get-ChildItem -LiteralPath $outputRoot -File -Filter "*.png" | Sort-Object Name | ForEach-Object {
+            $image = [System.Drawing.Bitmap]::FromFile($_.FullName)
+            try {
+              if ($image.Width -lt 900 -or $image.Height -lt 620) {
+                throw "Screenshot is unexpectedly small: $($_.Name) $($image.Width)x$($image.Height)"
+              }
+              $points = @(
+                [System.Drawing.Point]::new(0, 0),
+                [System.Drawing.Point]::new($image.Width - 1, 0),
+                [System.Drawing.Point]::new(0, $image.Height - 1),
+                [System.Drawing.Point]::new($image.Width - 1, $image.Height - 1)
+              )
+              foreach ($point in $points) {
+                $pixel = $image.GetPixel($point.X, $point.Y)
+                if ($pixel.A -ne 255 -or $pixel.R -ne 9 -or $pixel.G -ne 13 -or $pixel.B -ne 22) {
+                  throw "Screenshot corner is not opaque page color: $($_.Name) ARGB=$($pixel.A),$($pixel.R),$($pixel.G),$($pixel.B)"
+                }
+              }
+
+              # A failed WPF composition pass can leave a wide black, transparent, or
+              # page-colored band while all four corners still look correct. Sample every
+              # eighth pixel and reject any long run of rows that is overwhelmingly blank.
+              $longestBlankBand = 0
+              $currentBlankBand = 0
+              for ($y = 0; $y -lt $image.Height; $y++) {
+                $samples = 0
+                $blankSamples = 0
+                for ($x = 0; $x -lt $image.Width; $x += 8) {
+                  $pixel = $image.GetPixel($x, $y)
+                  $samples++
+                  $isTransparent = $pixel.A -le 1
+                  $isBlack = $pixel.A -eq 255 -and $pixel.R -le 1 -and $pixel.G -le 1 -and $pixel.B -le 1
+                  $isPageColor = $pixel.A -eq 255 -and [Math]::Abs($pixel.R - 9) -le 1 -and
+                    [Math]::Abs($pixel.G - 13) -le 1 -and [Math]::Abs($pixel.B - 22) -le 1
+                  if ($isTransparent -or $isBlack -or $isPageColor) {
+                    $blankSamples++
+                  }
+                }
+                if ($blankSamples -ge [Math]::Ceiling($samples * 0.90)) {
+                  $currentBlankBand++
+                  $longestBlankBand = [Math]::Max($longestBlankBand, $currentBlankBand)
+                }
+                else {
+                  $currentBlankBand = 0
+                }
+              }
+              $blankBandLimit = [Math]::Max(100, [Math]::Ceiling($image.Height * 0.15))
+              if ($longestBlankBand -ge $blankBandLimit) {
+                throw "Screenshot contains a blank uniform band: $($_.Name), $longestBlankBand row(s)"
+              }
+
+              Write-Host "$($_.Name): $($image.Width)x$($image.Height), opaque dark corners, no blank uniform band"
+            }
+            finally {
+              $image.Dispose()
+            }
+          }
+
+      - name: Upload review screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: dashboard-review-screenshots
+          path: ${{ runner.temp }}/dashboard-screenshots/*.png
+          if-no-files-found: error

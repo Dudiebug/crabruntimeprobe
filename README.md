@@ -3,6 +3,11 @@
 CrabRuntimeProbe is a standalone UE4SS Lua diagnostic/research mod for Crab Champions.
 It helps reverse engineer **safe runtime access rules** by combining object dump presence with in-session probe observations.
 
+Current release: **v1.0.4**. See the
+[release notes](docs/CRABRUNTIMEPROBE_V1.0.4_RELEASE_NOTES.md),
+[campaign and research guide](docs/CRABSYNC_FULL_CAMPAIGN_GUIDE.md), and
+[changelog](CHANGELOG.md).
+
 ## Why this exists
 
 UE4SS object dumps show what symbols exist, but not when/where access is safe. This project captures runtime facts with paced, breadcrumbed probing.
@@ -41,9 +46,22 @@ RuntimeProbe behavior:
 
 ## Install
 
-Use the install script from the real Git checkout. Do not drag a random local
-folder named `CrabRuntimeProbe` into the game; copied folders can be stale and
-may be missing safety defaults such as `allowHudTickHook = false`.
+For normal use, extract the `CrabRuntimeProbe-v*-win-x64.zip` release and open
+`CrabRuntimeProbe.Dashboard.exe`. The dashboard detects the game, validates the
+packaged payload, and prepares the read-only campaign without Git, Node, or a
+development SDK.
+
+For v1.0.4, close the game and old dashboard, extract the complete ZIP into a
+new empty folder, and use **Start play guide** once to install the packaged
+payload. Do not merge an old release directory or restore v1.0.2 configuration,
+trusted manifests, or runtime modules. Preserve old evidence ZIPs separately.
+
+The first **Start play guide** run installs the payload and records the current
+dashboard executable for local game-triggered startup. After that one-time
+setup, launching Crab Champions normally from Steam opens the dashboard and
+attaches it to the already-running game. Launching through **Start play guide**
+continues to open the game directly; a single-instance guard prevents duplicate
+dashboard windows.
 
 The Crab Champions Win64 game bin path is usually:
 
@@ -51,13 +69,13 @@ The Crab Champions Win64 game bin path is usually:
 C:\Program Files (x86)\Steam\steamapps\common\Crab Champions\CrabChampions\Binaries\Win64
 ```
 
-Preferred install:
+Repository developers can still install the client payload directly:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\install-client-to-game.ps1 "C:\Program Files (x86)\Steam\steamapps\common\Crab Champions\CrabChampions\Binaries\Win64"
 ```
 
-Preferred export for manual copying:
+Or export it for manual inspection:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\export-client-folder.ps1
@@ -74,75 +92,76 @@ unsafe HUD fallback that crashed immediately in this Crab Champions/UE4SS setup.
 The source default remains `tickDriver = none`; the first confirmed safe
 diagnostic tick driver for this UE4SS/Crab Champions setup is `executeDelay`.
 
-## Minimal user workflow
+## Normal Play Guide workflow
 
-1. Paste Codex prompts.
-2. Pull latest if Codex tells you a fix was committed:
+1. Open the dashboard on both computers.
+2. Leave the dashboard in its default **Play Guide** mode.
+3. Choose **I’m hosting** on one computer and **I’m joining a friend** on the
+   other, then confirm the game folder or use **Find automatically**.
+4. Click **Start play guide** on both computers.
+5. Create/join the same lobby and play one deliberate run while following the
+   large player-facing cards. They update automatically from qualifying clean
+   evidence; there are no manual completion boxes.
+6. Close both games normally and click **Finish and save results**.
+7. Export the two evidence ZIPs and use **Combine Bundles** for the offline
+   host/client readiness report.
 
-```powershell
-git checkout main
-git pull origin main
+The **Advanced** mode retains the technical Overview, exhaustive checklist,
+coverage catalog, and reports. Play Guide is only a presentation over the
+authoritative checklist; it does not change evidence rules or imply that
+CrabSync is ready.
+
+Normal Play Guide monitoring is snapshot-first and hook-free: it registers no
+gameplay, RPC, OnRep, multicast, HUD, or lifecycle hooks, performs no runtime
+UFunction discovery, and never calls or writes game behavior. The in-game side
+only samples a small reviewed set of stable PlayerState fields. The desktop GUI
+replays those append-only snapshots and qualifies explicit before/after rules.
+Exact-call, argument, replication, persistence, UI-follow-up, inventory-internal,
+and official apply candidates remain visible in **Needs Coverage**; a state
+change is not presented as proof of the exact function that caused it.
+
+The live display must show a fresh heartbeat and increasing sequence, along
+with game unavailable/warming/stable/ready/collecting/stale/stopped/faulted
+state, current sampling category, active profile, and collection readiness.
+Actions unavailable to the safe snapshot profile remain honestly labeled not
+observable instead of looking complete or broken.
+
+## Progressive Broad Observation workflow
+
+Advanced research mode prepares a controlled future launch containing:
+
+```text
+safe snapshot baseline
++ every compatibility-valid trusted hook at its individually validated depth
++ exactly one unvalidated canary registered last
 ```
 
-3. Run one quick smoke prepare script:
+Open **Advanced**, review the recommended candidate/depth and ordinary suggested
+action, explicitly start the research run, play normally, close normally, and
+review its classification. The dashboard can then prepare a repeat, next depth,
+candidate-alone control, quarantine, or return to safe Play Guide for the next
+process launch. It never advances candidates or depths in-process and provides
+no free-form hook path.
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\quick-smoke-prepare.ps1
-```
+v1.0.4 ships with zero trusted hooks and no prearmed canary.
+`OnRep_IslandRewardRarity` at Depth 1 (registration only) is the first
+recommendation, not a default activation. Registration alone never establishes
+trust, crash-suspect/quarantined candidates never auto-rearm, and a compatibility
+change marks prior trust **Needs revalidation**. See the
+[full guide](docs/CRABSYNC_FULL_CAMPAIGN_GUIDE.md) for all eight depths,
+promotion thresholds, attribution limits, recovery, relic-path distinction,
+and the 22-item automated/field verification checklist.
 
-4. Launch Crab Champions, sit at the menu for 20 to 30 seconds, then quit.
-5. Run one quick smoke collect script:
+Do not use or resume the v1.0.2 full-observe hook profile. Open the replacement
+dashboard and start/prepare the Play Guide once before launching the game; this
+reinstalls the payload and rewrites every legacy research gate to the hook-free
+snapshot profile. The evidence and containment decision are recorded in the
+[2026-07-10 hook observer incident](docs/INCIDENT_2026-07-10_HOOK_OBSERVER_CRASH.md).
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\quick-smoke-collect.ps1
-```
-
-6. Paste
-`Mods\CrabRuntimeProbe\Scripts\diagnostic_summary.txt` back to ChatGPT/Codex.
-
-Only after the smoke test passes, test one isolated tick driver:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\quick-tickdriver-prepare.ps1 -TickDriver executeDelay
-```
-
-Launch Crab Champions, sit at the menu for 20 to 30 seconds, then quit:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\quick-tickdriver-collect.ps1
-```
-
-For the next safe gameplay observe pass after `executeDelay` is confirmed:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\quick-gameplay-observe-prepare.ps1
-```
-
-Launch Crab Champions, start a solo run or host lobby, stay alive/in world for
-30 to 60 seconds, quit, then collect:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\quick-gameplay-observe-collect.ps1
-```
-
-After gameplay observe passes, run the next read-only equipment property phase:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\quick-equipment-property-prepare.ps1
-```
-
-Launch Crab Champions, start a solo run, stay in-world 30 to 60 seconds, quit,
-then collect:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\quick-equipment-property-collect.ps1
-```
-
-`equipment-property-read` is still read-only. It reads only `WeaponDA`,
-`AbilityDA`, and `MeleeDA` from `CrabPS` using `GetPropertyValue`. It does not
-read item arrays, does not read `InventoryInfo`, does not read health, does not
-write anything, and does not run RPC probes. Direct field equipment probes are
-intentionally separate in `equipment-direct-field-read`.
+See the [full campaign guide](docs/CRABSYNC_FULL_CAMPAIGN_GUIDE.md) for the exact
+multiplayer actions, status meanings, crash recovery, coverage rules, and safety
+boundary. A successful snapshot campaign is read/state-transition evidence;
+it is never write/apply proof.
 
 ## Evidence-driven documentation pipeline
 
@@ -401,42 +420,30 @@ testing that known-unsafe path.
 
 ## Release packaging
 
-CrabRuntimeProbe includes a source-visible UE4SS bundle template under
-`client/`. The UE4SS runtime files, UE4SS settings, UE4SS support mods, and
-UE4SS license were copied from a local CrabInvSync checkout/ZIP and are kept in
-source so reviewers can inspect the exact support files used by packaging.
-
-The packager does not copy CrabInvSync gameplay code, server files, objectdump
-files, runtime logs/output, `.git`, or `node_modules`. The bundle is meant to be
-extracted into:
-
-```text
-Crab Champions\CrabChampions\Binaries\Win64\
-```
-
-Recommended PowerShell workflow from the provided local ZIP:
+The canonical release is a self-contained Windows dashboard plus the
+source-visible UE4SS payload under `client/`. It does not require an external
+CrabInvSync template and excludes CrabInvSync gameplay code, servers, raw object
+dumps, runtime logs, `.git`, and `node_modules`.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-ue4ss-bundle.ps1 -CrabInvSyncRoot "C:\Users\dudie\Downloads\CrabInvSync-master.zip" -Version "0.1.0"
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version 1.0.4
 ```
 
-Build a staging folder without creating a ZIP:
+Build and verify the staging directory without creating a ZIP:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-ue4ss-bundle.ps1 -CrabInvSyncRoot "C:\Users\dudie\Downloads\CrabInvSync-master.zip" -Version "0.1.0" -NoZip
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build-release.ps1 -Version 1.0.4 -NoZip
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-release.ps1 -BundlePath dist\CrabRuntimeProbe-v1.0.4-win-x64
 ```
 
-Verify an existing staging folder:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify-ue4ss-bundle.ps1 "dist\CrabRuntimeProbe-v0.1.0-UE4SS"
-```
-
-Optional Node packager:
-
-```powershell
-node tools/package_release.js --template C:\Users\dudie\Downloads\CrabInvSync-master.zip
-```
+The ZIP contains the WPF dashboard, `Payload/` game overlay, campaign/checklist
+and coverage data, progressive catalog/ledger/trusted/quarantine/default
+artifacts, versioned schemas and runtime modules, user docs,
+licenses/attributions, sanitized build metadata, and a relative SHA-256 version
+manifest. Release verification requires an empty trusted manifest, no prearmed
+canary, safe hook-free defaults, and no raw dumps, local paths, logs, or
+development-only artifacts. The dashboard installs `Payload/` into the selected
+game directory; users do not manually copy the full release there.
 
 ## Exporting the client folder for manual testing
 
@@ -500,6 +507,24 @@ Objectdump workflow:
 4. Run `node tools/generate_probe_candidates.js`.
 5. Review `docs/PROBE_CANDIDATES.md`; generated candidates are documentation only.
 6. Run `node tools/generate_docs.js` to regenerate both objectdump docs and candidate docs.
+
+Full CrabSync coverage catalog workflow (the complete dump is mandatory):
+
+```powershell
+node tools/generate_crabsync_coverage_catalog.js --dump "<UE4SS_ObjectDump.txt>" --reference "<CrabInvSync objectdump notes directory>"
+node tools/generate_crabsync_coverage_catalog.js --validate
+```
+
+The full scan hashes and reads every dump line, merges all checked-in docs and
+runtime evidence, and generates the dashboard JSON/CSV/Markdown plus disabled
+exact-call research descriptors. Normal mode never registers those descriptors.
+Missing dump provenance is an error, not a silent
+skip. After importing a new evidence session, refresh runtime statuses without
+changing the recorded dump denominator:
+
+```powershell
+node tools/generate_crabsync_coverage_catalog.js --refresh-runtime
+```
 
 Runtime result workflow:
 

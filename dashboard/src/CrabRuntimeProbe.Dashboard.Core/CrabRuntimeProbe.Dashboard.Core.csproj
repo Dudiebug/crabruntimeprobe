@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>CrabRuntimeProbe.Dashboard.Core</RootNamespace>
+    <AssemblyName>CrabRuntimeProbe.Dashboard.Core</AssemblyName>
+  </PropertyGroup>
+</Project>

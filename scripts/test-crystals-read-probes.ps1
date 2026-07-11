@@ -75,9 +75,9 @@ foreach ($expected in @(
 
 $registry = Get-Content -Raw -LiteralPath $ProbeRegistryPath
 $helperStart = $registry.IndexOf("local function buildCrystalsReadCache")
-$helperEnd = $registry.IndexOf("local function classifyCrabHCSource")
+$helperEnd = $registry.IndexOf("local function buildSlotsReadCache")
 $probeStart = $registry.IndexOf("Resource.Crystals.Read")
-$probeEnd = $registry.IndexOf("FindAllOf.CrabHC.Availability")
+$probeEnd = $registry.IndexOf("Resource.Slots.Read")
 if ($helperStart -lt 0 -or $helperEnd -le $helperStart -or $probeStart -lt 0 -or $probeEnd -le $probeStart) { throw "could not isolate crystals-read probe block." }
 $crystalsBlock = $registry.Substring($helperStart, $helperEnd - $helperStart) + "`n" + $registry.Substring($probeStart, $probeEnd - $probeStart)
 foreach ($required in @(
